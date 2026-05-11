@@ -8,7 +8,7 @@ on:
         default: "3.12"
       dependencies:
         type: string
-        default: "pyyaml git+https://github.com/jslee02/awesome-list-infra.git"
+        default: "pyyaml jsonschema git+https://github.com/jslee02/awesome-list-infra.git"
       fetch-command:
         type: string
         default: "python3 scripts/fetch_metadata.py"

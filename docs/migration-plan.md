@@ -24,7 +24,7 @@ copying workflow and maintenance logic between repositories.
   only need a thin wrapper instead of copied `github-script` logic.
 - Repositories with GitHub-backed structured entries can use the reusable
   metadata refresh workflow to keep star counts and activity indicators current
-  through scheduled maintenance PRs.
+  through signed-off scheduled maintenance PRs.
 - All current awesome-list repositories now call the reusable README protection
   workflow through thin wrappers.
 - Five metadata-aware repositories now run scheduled metadata refresh:

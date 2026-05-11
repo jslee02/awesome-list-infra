@@ -17,6 +17,7 @@ Each awesome list should still own its domain content:
 - `schema/entry.schema.json`
 - `scripts/generate_readme.py`
 - `scripts/validate_entries.py`
+- `scripts/fetch_metadata.py` when the list uses GitHub-backed structured entries
 - repository license choice through `awesome-list.yaml`
 - repository-specific issue and submission automation
 
@@ -98,4 +99,12 @@ pip install pyyaml jsonschema
 python3 scripts/validate_entries.py
 python3 scripts/generate_readme.py -o /tmp/generated-readme.md
 diff -u README.md /tmp/generated-readme.md
+```
+
+For generic generated lists with structured GitHub entries, refresh activity and
+star metadata before regenerating:
+
+```sh
+python3 scripts/fetch_metadata.py
+python3 scripts/generate_readme.py
 ```

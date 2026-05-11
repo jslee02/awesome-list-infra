@@ -20,6 +20,15 @@ SKIP_SECTIONS = {
     "table of contents",
 }
 
+LICENSE_BLOCKS = {
+    "cc0": [
+        "[![CC0](https://licensebuttons.net/p/zero/1.0/88x31.png)](http://creativecommons.org/publicdomain/zero/1.0/)",
+    ],
+    "unlicense": [
+        "This list is released into the public domain under the [Unlicense](LICENSE).",
+    ],
+}
+
 
 def load_yaml(path: Path) -> Any:
     with path.open(encoding="utf-8") as f:
@@ -110,6 +119,12 @@ def validate(config_path: Path, data_path: Path) -> list[str]:
     if repo is not None and not isinstance(repo, str):
         errors.append(f"{config_path}: repository must be a string")
 
+    license_name = config.get("license", "cc0")
+    if not isinstance(license_name, str):
+        errors.append(f"{config_path}: license must be a string")
+    elif license_name.lower() not in LICENSE_BLOCKS:
+        errors.append(f"{config_path}: unsupported license {license_name!r}")
+
     sections = data.get("sections")
     if not isinstance(sections, list):
         errors.append(f"{data_path}: sections must be a list")
@@ -154,6 +169,7 @@ def render_readme(config: dict[str, Any], data: dict[str, Any]) -> str:
     title = config["title"]
     description = config.get("description") or ""
     repository = config.get("repository") or f"jslee02/{repo_slug_from_cwd()}"
+    license_name = (config.get("license") or "cc0").lower()
     sections = data.get("sections") or []
 
     lines: list[str] = [
@@ -182,10 +198,10 @@ def render_readme(config: dict[str, Any], data: dict[str, Any]) -> str:
             "",
             "## [License](#contents)",
             "",
-            "[![CC0](https://licensebuttons.net/p/zero/1.0/88x31.png)](http://creativecommons.org/publicdomain/zero/1.0/)",
-            "",
         ]
     )
+    lines.extend(LICENSE_BLOCKS[license_name])
+    lines.append("")
     return "\n".join(lines)
 
 

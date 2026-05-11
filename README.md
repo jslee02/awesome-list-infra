@@ -17,6 +17,7 @@ Each awesome list should still own its domain content:
 - `schema/entry.schema.json`
 - `scripts/generate_readme.py`
 - `scripts/validate_entries.py`
+- repository license choice through `awesome-list.yaml`
 - repository-specific issue and submission automation
 
 ## Reusable Workflows

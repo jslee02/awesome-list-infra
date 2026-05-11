@@ -9,6 +9,7 @@ awesome lists:
 - workflow templates for list repositories
 - shared maintenance utilities
 - migration notes for keeping list repositories consistent
+- `repositories.yaml` as the current inventory of awesome-list repository state
 
 Each awesome list should still own its domain content:
 
@@ -84,6 +85,9 @@ maintenance PR for review.
 6. Run the local validator/generator and link workflow before migrating the next
    repository.
 
+See [docs/migration-plan.md](docs/migration-plan.md) for the current rollout
+plan and [repositories.yaml](repositories.yaml) for per-repository status.
+
 ## Local Validation
 
 In a consumer repository:
@@ -94,4 +98,3 @@ python3 scripts/validate_entries.py
 python3 scripts/generate_readme.py -o /tmp/generated-readme.md
 diff -u README.md /tmp/generated-readme.md
 ```
-

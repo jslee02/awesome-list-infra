@@ -1,0 +1,101 @@
+repos:
+  - name: awesome-clang-tools
+    visibility: private
+    default_branch: main
+    main_protected: false
+    shared_infra: pending-audit
+    notes: Branch protection requires GitHub Pro or making the repository public.
+  - name: awesome-collision-detection
+    visibility: public
+    default_branch: main
+    main_protected: true
+    shared_infra: reusable-workflows
+  - name: awesome-constraint-solvers
+    visibility: private
+    default_branch: main
+    main_protected: false
+    shared_infra: pending-audit
+    notes: Branch protection requires GitHub Pro or making the repository public.
+  - name: awesome-cpp-python-binding-generator
+    visibility: public
+    default_branch: main
+    main_protected: true
+    shared_infra: pending-audit
+  - name: awesome-entity-component-system
+    visibility: public
+    default_branch: main
+    main_protected: true
+    shared_infra: pending-audit
+  - name: awesome-game-dev
+    visibility: private
+    default_branch: main
+    main_protected: false
+    shared_infra: pending-audit
+    notes: Branch protection requires GitHub Pro or making the repository public.
+  - name: awesome-gpgpu
+    visibility: public
+    default_branch: main
+    main_protected: true
+    shared_infra: pending-audit
+  - name: awesome-graphics-libraries
+    visibility: public
+    default_branch: main
+    main_protected: true
+    shared_infra: pending-audit
+  - name: awesome-machine-learning-framework
+    visibility: private
+    default_branch: main
+    main_protected: false
+    shared_infra: pending-audit
+    notes: Branch protection requires GitHub Pro or making the repository public.
+  - name: awesome-modern-cmake
+    visibility: private
+    default_branch: main
+    main_protected: false
+    shared_infra: pending-audit
+    notes: Branch protection requires GitHub Pro or making the repository public.
+  - name: awesome-motion-planning
+    visibility: private
+    default_branch: main
+    main_protected: false
+    shared_infra: pending-audit
+    notes: Branch protection requires GitHub Pro or making the repository public.
+  - name: awesome-multibody-dynamics-simulation
+    visibility: public
+    default_branch: main
+    main_protected: true
+    shared_infra: pending-audit
+  - name: awesome-projects
+    visibility: public
+    default_branch: main
+    main_protected: true
+    shared_infra: pending-audit
+  - name: awesome-reinforcement-learning-in-robotics
+    visibility: private
+    default_branch: main
+    main_protected: false
+    shared_infra: pending-audit
+    notes: Branch protection requires GitHub Pro or making the repository public.
+  - name: awesome-robotics
+    visibility: public
+    default_branch: main
+    main_protected: true
+    shared_infra: pending-audit
+  - name: awesome-robotics-blog
+    visibility: private
+    default_branch: main
+    main_protected: false
+    shared_infra: pending-audit
+    notes: Branch protection requires GitHub Pro or making the repository public.
+  - name: awesome-robotics-controls
+    visibility: private
+    default_branch: main
+    main_protected: false
+    shared_infra: pending-audit
+    notes: Branch protection requires GitHub Pro or making the repository public.
+  - name: awesome-robotics-libraries
+    visibility: public
+    default_branch: main
+    main_protected: true
+    shared_infra: reusable-workflows
+

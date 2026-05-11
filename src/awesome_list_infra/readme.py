@@ -49,6 +49,11 @@ def github_anchor(text: str) -> str:
     return value.strip("-")
 
 
+def plain_heading(text: str) -> str:
+    value = re.sub(r"\]\([^)]+\)", "]", text)
+    return value.replace("[", "").replace("]", "").strip()
+
+
 def repo_slug_from_cwd() -> str:
     return Path.cwd().name
 
@@ -260,7 +265,7 @@ def import_readme(readme_path: Path, repository: str) -> tuple[dict[str, Any], d
                 idx += 2 if consumed_setext else 1
                 continue
 
-            normalized = heading_title.strip().lower()
+            normalized = plain_heading(heading_title).lower()
             if normalized in SKIP_SECTIONS:
                 skip_level = level
                 idx += 2 if consumed_setext else 1

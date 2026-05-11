@@ -195,10 +195,12 @@ def parse_heading(line: str, next_line: str | None = None) -> tuple[int, str] | 
         return len(atx.group(1)), atx.group(2).strip()
 
     if next_line is not None:
+        if not line.strip() or line.lstrip().startswith(("*", "-", ">", "`")):
+            return None
         marker = next_line.strip()
-        if marker and set(marker) <= {"="}:
+        if len(marker) >= 3 and set(marker) <= {"="}:
             return 1, line.strip()
-        if marker and set(marker) <= {"-"}:
+        if len(marker) >= 3 and set(marker) <= {"-"}:
             return 2, line.strip()
     return None
 

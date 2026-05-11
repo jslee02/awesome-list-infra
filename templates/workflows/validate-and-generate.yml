@@ -1,0 +1,13 @@
+name: Validate Data
+
+on:
+  pull_request:
+    paths:
+      - "data/**"
+      - "schema/**"
+      - "scripts/**"
+
+jobs:
+  validate:
+    uses: jslee02/awesome-list-infra/.github/workflows/validate-data.yml@main
+

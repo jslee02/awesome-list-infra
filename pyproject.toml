@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "awesome-list-infra"
+version = "0.1.0"
+description = "Shared maintenance utilities for jslee02 awesome-list repositories"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Jeongseok Lee" }
+]
+
+[project.scripts]
+awesome-list-fix-links = "awesome_list_infra.fix_links:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

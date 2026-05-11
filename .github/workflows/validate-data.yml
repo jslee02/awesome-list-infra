@@ -1,0 +1,66 @@
+name: Reusable Validate Data
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.12"
+      dependencies:
+        type: string
+        default: "pyyaml jsonschema"
+      validate-command:
+        type: string
+        default: "python3 scripts/validate_entries.py"
+      generate-command:
+        type: string
+        default: "python3 scripts/generate_readme.py -o /tmp/generated-readme.md"
+      readme-path:
+        type: string
+        default: "README.md"
+      generated-readme-path:
+        type: string
+        default: "/tmp/generated-readme.md"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.dependencies }}" ]; then
+            pip install ${{ inputs.dependencies }}
+          fi
+
+      - name: Validate YAML against schema
+        shell: bash
+        run: ${{ inputs.validate-command }}
+
+      - name: Check README freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          ${{ inputs.generate-command }}
+          if ! diff -q "${{ inputs.readme-path }}" "${{ inputs.generated-readme-path }}" > /dev/null 2>&1; then
+            echo "::error::${{ inputs.readme-path }} is out of date with YAML data."
+            echo ""
+            echo "Please regenerate by running:"
+            echo "  pip install pyyaml"
+            echo "  python3 scripts/generate_readme.py"
+            echo ""
+            echo "If you cannot run the generator locally, note it in your PR"
+            echo "and a maintainer will regenerate for you."
+            echo ""
+            diff --unified "${{ inputs.readme-path }}" "${{ inputs.generated-readme-path }}" || true
+            exit 1
+          fi
+          echo "${{ inputs.readme-path }} is up to date"
+

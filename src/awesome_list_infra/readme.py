@@ -178,7 +178,7 @@ def render_readme(config: dict[str, Any], data: dict[str, Any]) -> str:
         [
             "## [Contributing](#contents)",
             "",
-            f"Contributions are very welcome. Please read the [contribution guidelines](https://github.com/{repository}/blob/main/CONTRIBUTING.md) first. Also, please feel free to report any error.",
+            "Contributions are very welcome. Please read the [contribution guidelines](CONTRIBUTING.md) first. Also, please feel free to report any error.",
             "",
             "## [License](#contents)",
             "",

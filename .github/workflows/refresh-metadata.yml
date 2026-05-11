@@ -30,6 +30,12 @@ on:
       labels:
         type: string
         default: "maintenance"
+      add-paths:
+        type: string
+        default: |
+          README.md
+          data/**/*.yaml
+          data/**/*.yml
 
 jobs:
   refresh:
@@ -71,6 +77,8 @@ jobs:
         uses: peter-evans/create-pull-request@v8
         with:
           commit-message: ${{ inputs.commit-message }}
+          signoff: true
+          add-paths: ${{ inputs.add-paths }}
           title: ${{ inputs.title }}
           body: |
             Refresh generated README metadata from GitHub.

@@ -122,7 +122,8 @@ jobs:
 ```
 
 The called workflow fetches GitHub metadata, regenerates `README.md`, validates
-the result, and opens a maintenance PR only when files changed.
+the result, and opens a signed-off maintenance PR only when expected metadata
+or README files changed.
 
 ## Migration Checklist
 

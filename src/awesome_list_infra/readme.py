@@ -69,6 +69,11 @@ def normalize_content_lines(lines: list[str]) -> list[str]:
     return lines
 
 
+def is_list_content(line: str) -> bool:
+    stripped = line.lstrip()
+    return stripped.startswith(("* ", "- ", "+ ")) or re.match(r"\d+\.\s+", stripped) is not None
+
+
 def normalize_section(section: dict[str, Any], path: str = "sections") -> list[str]:
     errors: list[str] = []
     title = section.get("title")
@@ -287,16 +292,28 @@ def import_readme(readme_path: Path, repository: str) -> tuple[dict[str, Any], d
     description = ""
     if description_lines:
         paragraph: list[str] = []
-        for line in description_lines:
-            if not line.strip():
-                if paragraph:
+        content_start = 0
+        if not is_list_content(description_lines[0]):
+            for idx, line in enumerate(description_lines):
+                if not line.strip():
+                    if paragraph:
+                        content_start = idx + 1
+                        break
+                    continue
+                if is_list_content(line):
+                    content_start = idx
                     break
-                continue
-            paragraph.append(line.strip())
+                paragraph.append(line.strip())
+            else:
+                content_start = len(description_lines)
+        resource_lines = normalize_content_lines(description_lines[content_start:])
+        if resource_lines:
+            resource_section = {"title": "Resources", "content": resource_lines, "sections": []}
+            if sections:
+                sections.insert(0, resource_section)
+            else:
+                sections.append(resource_section)
         description = " ".join(paragraph)
-
-    if not sections and description_lines:
-        sections.append({"title": "Resources", "content": description_lines, "sections": []})
 
     return (
         {

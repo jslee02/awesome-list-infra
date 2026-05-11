@@ -20,7 +20,7 @@ repos:
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: link-check-only
+    shared_infra: generic-generated-readme
   - name: awesome-entity-component-system
     visibility: public
     default_branch: main
@@ -36,12 +36,12 @@ repos:
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: link-check-only
+    shared_infra: generic-generated-readme
   - name: awesome-graphics-libraries
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: link-check-only
+    shared_infra: generic-generated-readme
   - name: awesome-machine-learning-framework
     visibility: private
     default_branch: main
@@ -64,12 +64,12 @@ repos:
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: link-check-only
+    shared_infra: generic-generated-readme
   - name: awesome-projects
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: link-check-only
+    shared_infra: generic-generated-readme
   - name: awesome-reinforcement-learning-in-robotics
     visibility: private
     default_branch: main
@@ -80,7 +80,7 @@ repos:
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: link-check-only
+    shared_infra: generic-generated-readme
   - name: awesome-robotics-blog
     visibility: private
     default_branch: main

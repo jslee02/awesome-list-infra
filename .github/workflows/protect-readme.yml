@@ -1,0 +1,49 @@
+name: Reusable Protect README
+
+on:
+  workflow_call:
+    inputs:
+      source-paths:
+        type: string
+        default: "awesome-list.yaml,data/,scripts/,schema/"
+      skip-bots:
+        type: boolean
+        default: true
+
+jobs:
+  check-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Block direct README edits
+        if: ${{ !inputs.skip-bots || github.event.pull_request.user.type != 'Bot' }}
+        uses: actions/github-script@v9
+        env:
+          SOURCE_PATHS: ${{ inputs.source-paths }}
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+
+            const sourcePaths = process.env.SOURCE_PATHS
+              .split(',')
+              .map(value => value.trim())
+              .filter(Boolean);
+
+            const matchesSourcePath = filename => sourcePaths.some(path =>
+              path.endsWith('/') ? filename.startsWith(path) : filename === path
+            );
+
+            const hasSourceChanges = files.some(file => matchesSourcePath(file.filename));
+
+            if (!hasSourceChanges) {
+              core.setFailed(
+                'README.md must not be edited directly.\n\n' +
+                'This repository uses a data-first workflow and auto-generates README.md from YAML files.\n\n' +
+                'To suggest a new resource, open an issue instead:\n' +
+                `https://github.com/${context.repo.owner}/${context.repo.repo}/issues/new/choose`
+              );
+            }

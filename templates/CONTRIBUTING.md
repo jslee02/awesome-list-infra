@@ -32,4 +32,3 @@ If you are opening a direct PR:
 - Remove trailing whitespace
 
 Thank you for the contribution.
-

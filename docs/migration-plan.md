@@ -25,6 +25,12 @@ copying workflow and maintenance logic between repositories.
 - Repositories with GitHub-backed structured entries can use the reusable
   metadata refresh workflow to keep star counts and activity indicators current
   through scheduled maintenance PRs.
+- All current awesome-list repositories now call the reusable README protection
+  workflow through thin wrappers.
+- Five metadata-aware repositories now run scheduled metadata refresh:
+  `awesome-robotics-libraries`, `awesome-collision-detection`,
+  `awesome-entity-component-system`, `awesome-graphics-libraries`, and
+  `awesome-gpgpu`.
 
 ## Phases
 

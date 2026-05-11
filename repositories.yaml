@@ -10,6 +10,7 @@ repos:
     default_branch: main
     main_protected: true
     shared_infra: reusable-workflows
+    metadata_refresh: scheduled
   - name: awesome-constraint-solvers
     visibility: private
     default_branch: main
@@ -26,6 +27,7 @@ repos:
     default_branch: main
     main_protected: true
     shared_infra: reusable-workflows
+    metadata_refresh: scheduled
   - name: awesome-game-dev
     visibility: private
     default_branch: main
@@ -37,11 +39,13 @@ repos:
     default_branch: main
     main_protected: true
     shared_infra: generic-generated-readme
+    metadata_refresh: scheduled
   - name: awesome-graphics-libraries
     visibility: public
     default_branch: main
     main_protected: true
     shared_infra: generic-generated-readme
+    metadata_refresh: scheduled
   - name: awesome-machine-learning-framework
     visibility: private
     default_branch: main
@@ -98,3 +102,4 @@ repos:
     default_branch: main
     main_protected: true
     shared_infra: reusable-workflows
+    metadata_refresh: scheduled

@@ -1,0 +1,82 @@
+name: Reusable Refresh Metadata
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.12"
+      dependencies:
+        type: string
+        default: "pyyaml git+https://github.com/jslee02/awesome-list-infra.git"
+      fetch-command:
+        type: string
+        default: "python3 scripts/fetch_metadata.py"
+      generate-command:
+        type: string
+        default: "python3 scripts/generate_readme.py"
+      validate-command:
+        type: string
+        default: "python3 scripts/validate_entries.py"
+      branch:
+        type: string
+        default: "refresh/metadata"
+      commit-message:
+        type: string
+        default: "Refresh README metadata"
+      title:
+        type: string
+        default: "Refresh README metadata"
+      labels:
+        type: string
+        default: "maintenance"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.dependencies }}" ]; then
+            pip install ${{ inputs.dependencies }}
+          fi
+
+      - name: Refresh metadata
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: ${{ inputs.fetch-command }}
+
+      - name: Regenerate README
+        shell: bash
+        run: ${{ inputs.generate-command }}
+
+      - name: Validate refreshed data
+        shell: bash
+        run: ${{ inputs.validate-command }}
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          commit-message: ${{ inputs.commit-message }}
+          title: ${{ inputs.title }}
+          body: |
+            Refresh generated README metadata from GitHub.
+
+            This updates stored star counts, activity timestamps, archive state,
+            license metadata, and the generated README where those values changed.
+          branch: ${{ inputs.branch }}
+          delete-branch: true
+          labels: ${{ inputs.labels }}

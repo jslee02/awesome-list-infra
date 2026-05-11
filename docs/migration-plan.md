@@ -20,6 +20,11 @@ copying workflow and maintenance logic between repositories.
   PR template, Dependabot, link-check, README protection, and validation
   workflow templates. Branch protection remains blocked by the current GitHub
   plan.
+- README protection is available as a reusable workflow so consumer repositories
+  only need a thin wrapper instead of copied `github-script` logic.
+- Repositories with GitHub-backed structured entries can use the reusable
+  metadata refresh workflow to keep star counts and activity indicators current
+  through scheduled maintenance PRs.
 
 ## Phases
 
@@ -28,6 +33,8 @@ copying workflow and maintenance logic between repositories.
    or the generic generated README workflow.
 3. Promote new shared behavior into this package when at least two repositories
    need the same behavior.
+4. Prefer thin workflow wrappers in consumer repositories over copied workflow
+   bodies.
 
 ## Migration Criteria
 
@@ -38,6 +45,11 @@ A repository can use the reusable workflows immediately when it has:
 - `schema/entry.schema.json`
 - `scripts/validate_entries.py`
 - `scripts/generate_readme.py`
+
+Repositories with structured GitHub-backed entries should also have:
+
+- `scripts/fetch_metadata.py`
+- `.github/workflows/refresh-metadata.yml`
 
 Repositories that do not have those files should either use the generic
 generated README template from this package or be converted to a domain-specific

@@ -8,6 +8,7 @@ awesome lists:
 - reusable GitHub Actions workflows
 - workflow templates for list repositories
 - shared maintenance utilities
+- generated metadata refresh automation
 - migration notes for keeping list repositories consistent
 - `repositories.yaml` as the current inventory of awesome-list repository state
 
@@ -76,6 +77,52 @@ jobs:
 Pull requests fail only on definitive broken links. Scheduled runs try to
 replace redirects and dead links with suggested or archived URLs, then open a
 maintenance PR for review.
+
+### Protect README
+
+Use this from an awesome-list repository that generates `README.md` from source
+data:
+
+```yaml
+name: Protect README
+
+on:
+  pull_request:
+    paths:
+      - "README.md"
+
+jobs:
+  check-readme:
+    uses: jslee02/awesome-list-infra/.github/workflows/protect-readme.yml@main
+```
+
+The called workflow blocks direct human edits to `README.md` unless the PR also
+changes one of the configured source paths (`awesome-list.yaml`, `data/`,
+`scripts/`, or `schema/` by default).
+
+### Refresh Metadata
+
+Use this from a repository that has `scripts/fetch_metadata.py`:
+
+```yaml
+name: Refresh Metadata
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    uses: jslee02/awesome-list-infra/.github/workflows/refresh-metadata.yml@main
+```
+
+The called workflow fetches GitHub metadata, regenerates `README.md`, validates
+the result, and opens a maintenance PR only when files changed.
 
 ## Migration Checklist
 

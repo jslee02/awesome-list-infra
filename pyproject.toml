@@ -12,10 +12,15 @@ license = { text = "MIT" }
 authors = [
   { name = "Jeongseok Lee" }
 ]
+dependencies = [
+  "PyYAML>=6"
+]
 
 [project.scripts]
 awesome-list-fix-links = "awesome_list_infra.fix_links:main"
+awesome-list-generate = "awesome_list_infra.readme:generate_main"
+awesome-list-validate = "awesome_list_infra.readme:validate_main"
+awesome-list-import-readme = "awesome_list_infra.readme:import_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

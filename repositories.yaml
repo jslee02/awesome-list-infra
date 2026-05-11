@@ -20,12 +20,12 @@ repos:
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: pending-audit
+    shared_infra: link-check-only
   - name: awesome-entity-component-system
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: pending-audit
+    shared_infra: reusable-workflows
   - name: awesome-game-dev
     visibility: private
     default_branch: main
@@ -36,12 +36,12 @@ repos:
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: pending-audit
+    shared_infra: link-check-only
   - name: awesome-graphics-libraries
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: pending-audit
+    shared_infra: link-check-only
   - name: awesome-machine-learning-framework
     visibility: private
     default_branch: main
@@ -64,12 +64,12 @@ repos:
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: pending-audit
+    shared_infra: link-check-only
   - name: awesome-projects
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: pending-audit
+    shared_infra: link-check-only
   - name: awesome-reinforcement-learning-in-robotics
     visibility: private
     default_branch: main
@@ -80,7 +80,7 @@ repos:
     visibility: public
     default_branch: main
     main_protected: true
-    shared_infra: pending-audit
+    shared_infra: link-check-only
   - name: awesome-robotics-blog
     visibility: private
     default_branch: main
@@ -98,4 +98,3 @@ repos:
     default_branch: main
     main_protected: true
     shared_infra: reusable-workflows
-

@@ -3,7 +3,7 @@ repos:
     visibility: private
     default_branch: main
     main_protected: false
-    shared_infra: pending-audit
+    shared_infra: generic-generated-readme
     notes: Branch protection requires GitHub Pro or making the repository public.
   - name: awesome-collision-detection
     visibility: public
@@ -14,7 +14,7 @@ repos:
     visibility: private
     default_branch: main
     main_protected: false
-    shared_infra: pending-audit
+    shared_infra: generic-generated-readme
     notes: Branch protection requires GitHub Pro or making the repository public.
   - name: awesome-cpp-python-binding-generator
     visibility: public
@@ -30,7 +30,7 @@ repos:
     visibility: private
     default_branch: main
     main_protected: false
-    shared_infra: pending-audit
+    shared_infra: generic-generated-readme
     notes: Branch protection requires GitHub Pro or making the repository public.
   - name: awesome-gpgpu
     visibility: public
@@ -46,19 +46,19 @@ repos:
     visibility: private
     default_branch: main
     main_protected: false
-    shared_infra: pending-audit
+    shared_infra: generic-generated-readme
     notes: Branch protection requires GitHub Pro or making the repository public.
   - name: awesome-modern-cmake
     visibility: private
     default_branch: main
     main_protected: false
-    shared_infra: pending-audit
+    shared_infra: generic-generated-readme
     notes: Branch protection requires GitHub Pro or making the repository public.
   - name: awesome-motion-planning
     visibility: private
     default_branch: main
     main_protected: false
-    shared_infra: pending-audit
+    shared_infra: generic-generated-readme
     notes: Branch protection requires GitHub Pro or making the repository public.
   - name: awesome-multibody-dynamics-simulation
     visibility: public
@@ -74,7 +74,7 @@ repos:
     visibility: private
     default_branch: main
     main_protected: false
-    shared_infra: pending-audit
+    shared_infra: generic-generated-readme
     notes: Branch protection requires GitHub Pro or making the repository public.
   - name: awesome-robotics
     visibility: public
@@ -85,13 +85,13 @@ repos:
     visibility: private
     default_branch: main
     main_protected: false
-    shared_infra: pending-audit
+    shared_infra: generic-generated-readme
     notes: Branch protection requires GitHub Pro or making the repository public.
   - name: awesome-robotics-controls
     visibility: private
     default_branch: main
     main_protected: false
-    shared_infra: pending-audit
+    shared_infra: generic-generated-readme
     notes: Branch protection requires GitHub Pro or making the repository public.
   - name: awesome-robotics-libraries
     visibility: public

@@ -16,18 +16,17 @@ copying workflow and maintenance logic between repositories.
   this package: `awesome-cpp-python-binding-generator`, `awesome-gpgpu`,
   `awesome-graphics-libraries`, `awesome-multibody-dynamics-simulation`,
   `awesome-projects`, and `awesome-robotics`.
-- The remaining consistency work is in the private repositories. They can use
-  the same generated README, issue template, PR template, Dependabot, and
-  workflow templates, but branch protection remains blocked by the current
-  GitHub plan.
+- All private repositories now use the same generated README, issue template,
+  PR template, Dependabot, link-check, README protection, and validation
+  workflow templates. Branch protection remains blocked by the current GitHub
+  plan.
 
 ## Phases
 
 1. Keep `repositories.yaml` current as the source of truth for repo state.
 2. Keep the public repositories on either the domain-specific reusable workflows
    or the generic generated README workflow.
-3. Convert private repositories to the generic generated README layout.
-4. Promote new shared behavior into this package when at least two repositories
+3. Promote new shared behavior into this package when at least two repositories
    need the same behavior.
 
 ## Migration Criteria

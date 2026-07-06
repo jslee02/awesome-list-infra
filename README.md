@@ -144,6 +144,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: read
   issues: write
   pull-requests: read

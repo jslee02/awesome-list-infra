@@ -62,12 +62,43 @@ jobs:
               response.data
             );
 
-      - name: Check out pull request files
-        uses: actions/checkout@v7
+      - name: Fetch pull request files
+        uses: actions/github-script@v9
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const root = path.join(process.env.RUNNER_TEMP, 'pr-files');
+            const [headOwner, headRepo] = context.payload.pull_request.head.repo.full_name.split('/');
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+
+            for (const file of files) {
+              if (file.status === 'removed' || !/\.ya?ml$/i.test(file.filename)) {
+                continue;
+              }
+
+              const response = await github.rest.repos.getContent({
+                owner: headOwner,
+                repo: headRepo,
+                path: file.filename,
+                ref: context.payload.pull_request.head.sha,
+              });
+              if (Array.isArray(response.data) || !response.data.content) {
+                throw new Error(`Expected file content for ${file.filename}`);
+              }
+              const content = Buffer.from(response.data.content, response.data.encoding || 'base64');
+              const target = path.join(root, file.filename);
+              if (!target.startsWith(`${root}${path.sep}`)) {
+                throw new Error(`Unexpected file path: ${file.filename}`);
+              }
+              fs.mkdirSync(path.dirname(target), { recursive: true });
+              fs.writeFileSync(target, content);
+            }
 
       - name: Audit changed resource entries
         id: audit
@@ -77,7 +108,7 @@ jobs:
           awesome-list-audit-direct-resource-pr \
             --patch "$RUNNER_TEMP/pr.diff" \
             --data-paths "${{ inputs.data-paths }}" \
-            --repo-root "$GITHUB_WORKSPACE" \
+            --repo-root "$RUNNER_TEMP/pr-files" \
             --github-output >> "$GITHUB_OUTPUT"
 
       - name: Comment and close direct resource PR

@@ -284,6 +284,34 @@ class AuditDirectResourcePrTest(unittest.TestCase):
         self.assertFalse(result.direct_resource_pr)
         self.assertEqual(result.additions, [])
 
+    def test_ignores_adjacent_context_free_nested_section_renames_with_file_context(self):
+        result = self.audit_with_repo_file(
+            "data/motion-planning.yaml",
+            "\n".join(
+                [
+                    "sections:",
+                    "  - name: Parent",
+                    "    sections:",
+                    "      - name: Child",
+                    "        content:",
+                    "          - name: New Nested Planner A",
+                    "          - name: New Nested Planner B",
+                    "",
+                ]
+            ),
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -6,2 +6,2 @@\n",
+                "-          - name: Old Nested Planner A\n",
+                "-          - name: Old Nested Planner B\n",
+                "+          - name: New Nested Planner A\n",
+                "+          - name: New Nested Planner B\n",
+            ],
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
     def test_ignores_context_free_nested_metadata_name_with_file_context(self):
         result = self.audit_with_repo_file(
             "data/motion-planning.yaml",

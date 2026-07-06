@@ -1,0 +1,89 @@
+name: Reusable Stale Author-Action Issues
+
+on:
+  workflow_call:
+    inputs:
+      only-issue-labels:
+        type: string
+        default: "suggestion,question"
+        description: Comma-separated labels that an issue must all have to be processed.
+      exempt-issue-labels:
+        type: string
+        default: "accepted,incubator,rejected,duplicate"
+        description: Comma-separated labels that exempt issues from stale processing.
+      stale-issue-label:
+        type: string
+        default: "stale"
+        description: Label to apply after the waiting period expires.
+      stale-issue-label-color:
+        type: string
+        default: "ededed"
+        description: Hex color for the stale label.
+      stale-issue-label-description:
+        type: string
+        default: "No author response after requested updates"
+        description: Description for the stale label.
+      days-before-issue-stale:
+        type: number
+        default: 14
+        description: Days of inactivity before marking a waiting issue stale.
+      days-before-issue-close:
+        type: number
+        default: 14
+        description: Days to wait after stale labeling before closing the issue.
+      operations-per-run:
+        type: number
+        default: 30
+        description: Maximum stale operations per workflow run.
+      stale-issue-message:
+        type: string
+        default: |
+          This suggestion has been marked stale because we asked for more information and have not seen an author update for about two weeks.
+
+          Please update the issue with the requested details, or reply confirming that it should be reviewed as a non-GitHub resource. The stale label will be removed automatically after new activity. If there is no update in another two weeks, this issue will be closed.
+        description: Comment posted when marking a waiting issue stale.
+      close-issue-message:
+        type: string
+        default: |
+          Closing this suggestion because there was no author update after the stale notice.
+
+          A new suggestion can be opened with the requested details when the resource is ready for review.
+        description: Comment posted when closing a stale waiting issue.
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Ensure stale label exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STALE_LABEL: ${{ inputs.stale-issue-label }}
+          STALE_COLOR: ${{ inputs.stale-issue-label-color }}
+          STALE_DESCRIPTION: ${{ inputs.stale-issue-label-description }}
+        run: |
+          gh label create "$STALE_LABEL" \
+            --repo "$GITHUB_REPOSITORY" \
+            --color "$STALE_COLOR" \
+            --description "$STALE_DESCRIPTION" \
+            --force
+
+      - uses: actions/stale@v10.3.0
+        with:
+          days-before-stale: -1
+          days-before-close: -1
+          days-before-issue-stale: ${{ inputs.days-before-issue-stale }}
+          days-before-issue-close: ${{ inputs.days-before-issue-close }}
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          stale-issue-label: ${{ inputs.stale-issue-label }}
+          stale-issue-message: ${{ inputs.stale-issue-message }}
+          close-issue-message: ${{ inputs.close-issue-message }}
+          close-issue-reason: not_planned
+          only-issue-labels: ${{ inputs.only-issue-labels }}
+          exempt-issue-labels: ${{ inputs.exempt-issue-labels }}
+          remove-issue-stale-when-updated: true
+          operations-per-run: ${{ inputs.operations-per-run }}

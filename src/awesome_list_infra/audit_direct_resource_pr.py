@@ -149,6 +149,10 @@ def _update_pending_entries(
                 and marker != pending_entry.marker
             ):
                 remaining_entries.append(pending_entry)
+            elif pending_entry.marker == "+":
+                added_entries.append(pending_entry.addition)
+            else:
+                removed_entry_count += 1
             continue
 
         if key in SECTION_FIELD_KEYS:

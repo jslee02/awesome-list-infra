@@ -96,6 +96,21 @@ class AuditDirectResourcePrTest(unittest.TestCase):
         self.assertTrue(result.direct_resource_pr)
         self.assertEqual(result.additions[0].name, "CERT-FLOW")
 
+    def test_detects_name_only_indented_entry_before_outdent(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -20,6 +20,8 @@\n",
+                "       - name: Existing Planner\n",
+                "+      - name: CERT-FLOW\n",
+                "   - name: Next Section\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertTrue(result.direct_resource_pr)
+        self.assertEqual(result.additions[0].name, "CERT-FLOW")
+
     def test_ignores_indented_section_name_from_patch(self):
         result = audit_patch(
             [

@@ -162,6 +162,21 @@ def _update_pending_entries(
     return removed_entry_count
 
 
+def _flush_pending_entries(
+    pending_entries: list[_PendingEntry],
+    added_entries: list[ResourceAddition],
+) -> int:
+    removed_entry_count = 0
+    for pending_entry in pending_entries:
+        if pending_entry.marker == "+":
+            added_entries.append(pending_entry.addition)
+        else:
+            removed_entry_count += 1
+
+    pending_entries.clear()
+    return removed_entry_count
+
+
 def _collect_diff_lines(
     lines: Iterable[str],
     path_patterns: list[str],
@@ -179,12 +194,14 @@ def _collect_diff_lines(
 
         header_match = DIFF_HEADER_RE.match(line) if filename_from_header else None
         if header_match:
+            removed_entry_count += _flush_pending_entries(pending_entries, added_entries)
             current_file = header_match.group("new")
             context_stack = []
             pending_entries = []
             continue
 
         if line.startswith("@@"):
+            removed_entry_count += _flush_pending_entries(pending_entries, added_entries)
             context_stack = []
             pending_entries = []
             continue
@@ -239,6 +256,7 @@ def _collect_diff_lines(
 
         _track_context(context_stack, payload, indent)
 
+    removed_entry_count += _flush_pending_entries(pending_entries, added_entries)
     return added_entries, removed_entry_count
 
 

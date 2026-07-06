@@ -82,6 +82,20 @@ class AuditDirectResourcePrTest(unittest.TestCase):
         self.assertTrue(result.direct_resource_pr)
         self.assertEqual(result.additions[0].name, "CERT-FLOW")
 
+    def test_detects_name_only_indented_entry_without_parent_context(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -20,6 +20,7 @@\n",
+                "       - name: Existing Planner\n",
+                "+      - name: CERT-FLOW\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertTrue(result.direct_resource_pr)
+        self.assertEqual(result.additions[0].name, "CERT-FLOW")
+
     def test_ignores_indented_section_name_from_patch(self):
         result = audit_patch(
             [
@@ -263,6 +277,20 @@ class AuditDirectResourcePrTest(unittest.TestCase):
                 "-      - name: Old Name\n",
                 "+      - name: New Name\n",
                 "         github: owner/repo\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
+    def test_ignores_name_only_indented_renames_without_parent_context(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/vision.yaml b/data/vision.yaml\n",
+                "@@ -20,7 +20,7 @@\n",
+                "-      - name: Old Name\n",
+                "+      - name: New Name\n",
             ],
             PATTERNS,
         )

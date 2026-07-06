@@ -108,12 +108,17 @@ def _is_resource_entry(indent: int, context_stack: list[tuple[int, str]]) -> boo
     return any(key == "content" and indent > context_indent for context_indent, key in context_stack)
 
 
+def _is_section_entry(indent: int, context_stack: list[tuple[int, str]]) -> bool:
+    in_sections = any(key == "sections" and indent > context_indent for context_indent, key in context_stack)
+    return in_sections and not _is_resource_entry(indent, context_stack)
+
+
 def _track_context(context_stack: list[tuple[int, str]], payload: str, indent: int) -> None:
     key_match = YAML_KEY_RE.match(payload)
-    if not key_match or key_match.group("key") != "content":
+    if not key_match or key_match.group("key") not in SECTION_FIELD_KEYS:
         return
 
-    context_stack.append((indent, "content"))
+    context_stack.append((indent, key_match.group("key")))
 
 
 def _field_key(payload: str) -> str:
@@ -242,6 +247,9 @@ def _collect_diff_lines(
                 continue
 
         if entry_match and indent > 0 and marker in {"+", "-"}:
+            if _is_section_entry(indent, context_stack):
+                continue
+
             pending_entries.append(
                 _PendingEntry(
                     marker=marker,

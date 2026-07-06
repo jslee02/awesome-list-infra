@@ -307,6 +307,7 @@ def _collect_diff_lines(
     current_new_line_number = 0
     context_stack: list[tuple[int, str]] = []
     pending_entries: list[_PendingEntry] = []
+    pending_file_context_removal: _PendingEntry | None = None
     added_entries: list[ResourceAddition] = []
     removed_entry_count = 0
     repo_path = Path(repo_root) if repo_root is not None else None
@@ -321,6 +322,7 @@ def _collect_diff_lines(
             current_file = header_match.group("new")
             context_stack = []
             pending_entries = []
+            pending_file_context_removal = None
             current_new_line_number = 0
             continue
 
@@ -328,6 +330,7 @@ def _collect_diff_lines(
             removed_entry_count += _flush_pending_entries(pending_entries, added_entries)
             context_stack = []
             pending_entries = []
+            pending_file_context_removal = None
             hunk_match = HUNK_HEADER_RE.match(line)
             current_new_line_number = int(hunk_match.group("start")) if hunk_match else 0
             continue
@@ -350,6 +353,16 @@ def _collect_diff_lines(
 
         indent = _pop_context_for_line(context_stack, payload)
         entry_match = ENTRY_RE.match(payload)
+        matches_pending_file_context_removal = (
+            pending_file_context_removal is not None
+            and entry_match is not None
+            and marker == "+"
+            and indent == pending_file_context_removal.indent
+            and current_file == pending_file_context_removal.addition.file
+        )
+        if pending_file_context_removal is not None and not matches_pending_file_context_removal:
+            pending_file_context_removal = None
+
         removed_entry_count += _update_pending_entries(
             pending_entries,
             marker,
@@ -366,6 +379,10 @@ def _collect_diff_lines(
                 resource_name_line_cache,
             )
             if is_file_resource_entry is True:
+                if matches_pending_file_context_removal:
+                    removed_entry_count += 1
+                    pending_file_context_removal = None
+
                 added_entries.append(
                     ResourceAddition(
                         file=current_file,
@@ -375,6 +392,8 @@ def _collect_diff_lines(
                 continue
 
             if is_file_resource_entry is False:
+                if matches_pending_file_context_removal:
+                    pending_file_context_removal = None
                 continue
 
         if entry_match and _is_resource_entry(indent, context_stack):
@@ -399,6 +418,15 @@ def _collect_diff_lines(
                 continue
 
             if not _is_context_free_resource_entry(indent, context_stack):
+                if marker == "-" and repo_path is not None:
+                    pending_file_context_removal = _PendingEntry(
+                        marker=marker,
+                        addition=ResourceAddition(
+                            file=current_file,
+                            name=_clean_scalar(entry_match.group("name")),
+                        ),
+                        indent=indent,
+                    )
                 continue
 
             pending_entries.append(

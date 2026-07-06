@@ -13,8 +13,8 @@ from typing import Iterable
 
 
 DIFF_HEADER_RE = re.compile(r"^diff --git a/(?P<old>.+?) b/(?P<new>.+)$")
-ADDED_ENTRY_RE = re.compile(r"^\+\s*-\s+name\s*:\s*(?P<name>.+?)\s*$")
-REMOVED_ENTRY_RE = re.compile(r"^-\s*-\s+name\s*:\s*(?P<name>.+?)\s*$")
+ENTRY_RE = re.compile(r"^(?P<indent>\s*)-\s+name\s*:\s*(?P<name>.+?)\s*$")
+YAML_KEY_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?(?P<key>[A-Za-z_][\w-]*)\s*:")
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,93 @@ def _clean_scalar(value: str) -> str:
     return value
 
 
+def _diff_payload(line: str) -> tuple[str, str] | None:
+    if not line or line.startswith(("+++", "---", "@@")):
+        return None
+    if line[0] not in {" ", "+", "-"}:
+        return None
+    return line[0], line[1:]
+
+
+def _indent_width(value: str) -> int:
+    return len(value) - len(value.lstrip(" "))
+
+
+def _pop_context_for_line(context_stack: list[tuple[int, str]], payload: str) -> int:
+    if not payload.strip():
+        return 0
+
+    indent = _indent_width(payload)
+    while context_stack and indent <= context_stack[-1][0]:
+        context_stack.pop()
+    return indent
+
+
+def _is_resource_entry(indent: int, context_stack: list[tuple[int, str]]) -> bool:
+    if indent == 0:
+        return True
+
+    return any(key == "content" and indent > context_indent for context_indent, key in context_stack)
+
+
+def _track_context(context_stack: list[tuple[int, str]], payload: str, indent: int) -> None:
+    key_match = YAML_KEY_RE.match(payload)
+    if not key_match or key_match.group("key") != "content":
+        return
+
+    context_stack.append((indent, "content"))
+
+
+def _collect_diff_lines(
+    lines: Iterable[str],
+    path_patterns: list[str],
+    filename_from_header: bool,
+    initial_file: str = "",
+) -> tuple[list[ResourceAddition], int]:
+    current_file = initial_file
+    context_stack: list[tuple[int, str]] = []
+    added_entries: list[ResourceAddition] = []
+    removed_entry_count = 0
+
+    for raw_line in lines:
+        line = raw_line.rstrip("\n")
+
+        header_match = DIFF_HEADER_RE.match(line) if filename_from_header else None
+        if header_match:
+            current_file = header_match.group("new")
+            context_stack = []
+            continue
+
+        if not current_file or not _matches_path(current_file, path_patterns):
+            continue
+
+        diff_payload = _diff_payload(line)
+        if not diff_payload:
+            continue
+
+        marker, payload = diff_payload
+        indent = _pop_context_for_line(context_stack, payload)
+        entry_match = ENTRY_RE.match(payload)
+
+        if entry_match and _is_resource_entry(indent, context_stack):
+            if marker == "+":
+                added_entries.append(
+                    ResourceAddition(
+                        file=current_file,
+                        name=_clean_scalar(entry_match.group("name")),
+                    )
+                )
+                continue
+
+            if marker == "-":
+                removed_entry_count += 1
+                continue
+
+        _track_context(context_stack, payload, indent)
+
+    return added_entries, removed_entry_count
+
+
 def _result(
     added_entries: list[ResourceAddition],
     removed_entry_count: int,
@@ -77,34 +164,11 @@ def _result(
 
 
 def audit_patch(lines: Iterable[str], path_patterns: list[str]) -> AuditResult:
-    current_file = ""
-    added_entries: list[ResourceAddition] = []
-    removed_entry_count = 0
-
-    for raw_line in lines:
-        line = raw_line.rstrip("\n")
-
-        header_match = DIFF_HEADER_RE.match(line)
-        if header_match:
-            current_file = header_match.group("new")
-            continue
-
-        if not current_file or not _matches_path(current_file, path_patterns):
-            continue
-
-        added_match = ADDED_ENTRY_RE.match(line)
-        if added_match:
-            added_entries.append(
-                ResourceAddition(
-                    file=current_file,
-                    name=_clean_scalar(added_match.group("name")),
-                )
-            )
-            continue
-
-        if REMOVED_ENTRY_RE.match(line):
-            removed_entry_count += 1
-
+    added_entries, removed_entry_count = _collect_diff_lines(
+        lines,
+        path_patterns,
+        filename_from_header=True,
+    )
     return _result(added_entries, removed_entry_count)
 
 
@@ -118,19 +182,14 @@ def audit_github_files(files: Iterable[dict], path_patterns: list[str]) -> Audit
             continue
 
         patch = str(file_info.get("patch") or "")
-        for line in patch.splitlines():
-            added_match = ADDED_ENTRY_RE.match(line)
-            if added_match:
-                added_entries.append(
-                    ResourceAddition(
-                        file=filename,
-                        name=_clean_scalar(added_match.group("name")),
-                    )
-                )
-                continue
-
-            if REMOVED_ENTRY_RE.match(line):
-                removed_entry_count += 1
+        file_added_entries, file_removed_entry_count = _collect_diff_lines(
+            patch.splitlines(),
+            [filename],
+            filename_from_header=False,
+            initial_file=filename,
+        )
+        added_entries.extend(file_added_entries)
+        removed_entry_count += file_removed_entry_count
 
     return _result(added_entries, removed_entry_count)
 

@@ -175,6 +175,48 @@ class AuditDirectResourcePrTest(unittest.TestCase):
         self.assertFalse(result.direct_resource_pr)
         self.assertEqual(result.additions, [])
 
+    def test_ignores_context_free_nested_metadata_name_from_patch(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/dynamics-simulation.yaml b/data/dynamics-simulation.yaml\n",
+                "@@ -20,6 +20,7 @@\n",
+                "          - name: Existing Model\n",
+                "+          - name: New Model\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
+    def test_ignores_context_free_top_level_metadata_name_from_patch(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/dynamics-simulation.yaml b/data/dynamics-simulation.yaml\n",
+                "@@ -20,6 +20,7 @@\n",
+                "    - name: Existing Model\n",
+                "+    - name: New Model\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
+    def test_ignores_context_free_indented_section_name_from_patch(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -20,6 +20,7 @@\n",
+                "  - name: Existing Section\n",
+                "+  - name: New Section\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
     def test_resets_context_between_hunks(self):
         result = audit_patch(
             [

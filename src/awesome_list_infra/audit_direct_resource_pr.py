@@ -32,6 +32,7 @@ RESOURCE_FIELD_KEYS = {
 }
 SECTION_FIELD_KEYS = {"content", "sections"}
 IGNORED_CONTEXT_KEYS = {"name"}
+CONTEXT_FREE_RESOURCE_ENTRY_INDENT = 6
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,17 @@ def _is_section_entry(indent: int, context_stack: list[tuple[int, str]]) -> bool
 def _is_nested_field_entry(indent: int, context_stack: list[tuple[int, str]]) -> bool:
     context = _nearest_context(indent, context_stack)
     return bool(context and context[1] not in SECTION_FIELD_KEYS)
+
+
+def _is_context_free_resource_entry(
+    indent: int, context_stack: list[tuple[int, str]]
+) -> bool:
+    if _nearest_context(indent, context_stack):
+        return True
+
+    # Top-level entries are handled immediately. Without a parent key in the hunk,
+    # only the supported sections[].content[] layout has a safe indented depth.
+    return indent == CONTEXT_FREE_RESOURCE_ENTRY_INDENT
 
 
 def _track_context(context_stack: list[tuple[int, str]], payload: str, indent: int) -> None:
@@ -272,6 +284,9 @@ def _collect_diff_lines(
                 continue
 
             if _is_nested_field_entry(indent, context_stack):
+                continue
+
+            if not _is_context_free_resource_entry(indent, context_stack):
                 continue
 
             pending_entries.append(

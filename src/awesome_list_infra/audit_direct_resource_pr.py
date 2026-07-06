@@ -8,11 +8,15 @@ import json
 import re
 import sys
 from dataclasses import asdict, dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Iterable
+
+import yaml
+from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 
 DIFF_HEADER_RE = re.compile(r"^diff --git a/(?P<old>.+?) b/(?P<new>.+)$")
+HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,\d+)? @@")
 ENTRY_RE = re.compile(r"^(?P<indent>\s*)-\s+name\s*:\s*(?P<name>.+?)\s*$")
 YAML_KEY_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?(?P<key>[A-Za-z_][\w-]*)\s*:")
 RESOURCE_FIELD_KEYS = {
@@ -32,7 +36,7 @@ RESOURCE_FIELD_KEYS = {
 }
 SECTION_FIELD_KEYS = {"content", "sections"}
 IGNORED_CONTEXT_KEYS = {"name"}
-CONTEXT_FREE_RESOURCE_ENTRY_INDENT = 6
+DIFF_ONLY_RESOURCE_ENTRY_INDENT = 6
 
 
 @dataclass(frozen=True)
@@ -137,9 +141,9 @@ def _is_context_free_resource_entry(
     if _nearest_context(indent, context_stack):
         return True
 
-    # Top-level entries are handled immediately. Without a parent key in the hunk,
-    # only the supported sections[].content[] layout has a safe indented depth.
-    return indent == CONTEXT_FREE_RESOURCE_ENTRY_INDENT
+    # The reusable workflow passes --repo-root for exact YAML context, including
+    # nested sections. Diff-only callers keep a conservative one-level fallback.
+    return indent == DIFF_ONLY_RESOURCE_ENTRY_INDENT
 
 
 def _track_context(context_stack: list[tuple[int, str]], payload: str, indent: int) -> None:
@@ -153,6 +157,83 @@ def _track_context(context_stack: list[tuple[int, str]], payload: str, indent: i
 def _field_key(payload: str) -> str:
     key_match = YAML_KEY_RE.match(payload)
     return key_match.group("key") if key_match else ""
+
+
+def _scalar_value(node: Node) -> str:
+    return node.value if isinstance(node, ScalarNode) else ""
+
+
+def _name_key_line(mapping: MappingNode) -> int | None:
+    for key_node, _ in mapping.value:
+        if _scalar_value(key_node) == "name":
+            return key_node.start_mark.line + 1
+
+    return None
+
+
+def _collect_resource_name_lines(
+    node: Node,
+    parent_key: str = "",
+) -> set[int]:
+    resource_name_lines: set[int] = set()
+
+    if isinstance(node, SequenceNode):
+        for item in node.value:
+            if isinstance(item, MappingNode) and parent_key in {"", "content"}:
+                name_line = _name_key_line(item)
+                if name_line is not None:
+                    resource_name_lines.add(name_line)
+            resource_name_lines.update(_collect_resource_name_lines(item, parent_key))
+
+        return resource_name_lines
+
+    if isinstance(node, MappingNode):
+        for key_node, value_node in node.value:
+            resource_name_lines.update(
+                _collect_resource_name_lines(value_node, _scalar_value(key_node))
+            )
+
+    return resource_name_lines
+
+
+def _resource_name_lines_for_file(
+    repo_root: Path | None,
+    filename: str,
+    cache: dict[str, set[int] | None],
+) -> set[int] | None:
+    if repo_root is None:
+        return None
+
+    if filename in cache:
+        return cache[filename]
+
+    path = repo_root / filename
+    try:
+        with path.open(encoding="utf-8") as file:
+            document = yaml.compose(file)
+    except (OSError, yaml.YAMLError):
+        cache[filename] = None
+        return None
+
+    if document is None:
+        cache[filename] = set()
+        return cache[filename]
+
+    cache[filename] = _collect_resource_name_lines(document)
+    return cache[filename]
+
+
+def _is_resource_entry_in_file(
+    repo_root: Path | None,
+    filename: str,
+    line_number: int,
+    cache: dict[str, set[int] | None],
+) -> bool | None:
+    resource_name_lines = _resource_name_lines_for_file(repo_root, filename, cache)
+    if resource_name_lines is None:
+        return None
+
+    return line_number in resource_name_lines
 
 
 def _update_pending_entries(
@@ -220,12 +301,16 @@ def _collect_diff_lines(
     path_patterns: list[str],
     filename_from_header: bool,
     initial_file: str = "",
+    repo_root: Path | str | None = None,
 ) -> tuple[list[ResourceAddition], int]:
     current_file = initial_file
+    current_new_line_number = 0
     context_stack: list[tuple[int, str]] = []
     pending_entries: list[_PendingEntry] = []
     added_entries: list[ResourceAddition] = []
     removed_entry_count = 0
+    repo_path = Path(repo_root) if repo_root is not None else None
+    resource_name_line_cache: dict[str, set[int] | None] = {}
 
     for raw_line in lines:
         line = raw_line.rstrip("\n")
@@ -236,12 +321,15 @@ def _collect_diff_lines(
             current_file = header_match.group("new")
             context_stack = []
             pending_entries = []
+            current_new_line_number = 0
             continue
 
         if line.startswith("@@"):
             removed_entry_count += _flush_pending_entries(pending_entries, added_entries)
             context_stack = []
             pending_entries = []
+            hunk_match = HUNK_HEADER_RE.match(line)
+            current_new_line_number = int(hunk_match.group("start")) if hunk_match else 0
             continue
 
         if not current_file or not _matches_path(current_file, path_patterns):
@@ -252,6 +340,11 @@ def _collect_diff_lines(
             continue
 
         marker, payload = diff_payload
+        line_number = 0
+        if marker in {" ", "+"}:
+            line_number = current_new_line_number
+            current_new_line_number += 1
+
         if not payload.strip():
             continue
 
@@ -264,6 +357,25 @@ def _collect_diff_lines(
             indent,
             added_entries,
         )
+
+        if entry_match and marker == "+" and line_number:
+            is_file_resource_entry = _is_resource_entry_in_file(
+                repo_path,
+                current_file,
+                line_number,
+                resource_name_line_cache,
+            )
+            if is_file_resource_entry is True:
+                added_entries.append(
+                    ResourceAddition(
+                        file=current_file,
+                        name=_clean_scalar(entry_match.group("name")),
+                    )
+                )
+                continue
+
+            if is_file_resource_entry is False:
+                continue
 
         if entry_match and _is_resource_entry(indent, context_stack):
             if marker == "+":
@@ -327,16 +439,25 @@ def _result(
     )
 
 
-def audit_patch(lines: Iterable[str], path_patterns: list[str]) -> AuditResult:
+def audit_patch(
+    lines: Iterable[str],
+    path_patterns: list[str],
+    repo_root: Path | str | None = None,
+) -> AuditResult:
     added_entries, removed_entry_count = _collect_diff_lines(
         lines,
         path_patterns,
         filename_from_header=True,
+        repo_root=repo_root,
     )
     return _result(added_entries, removed_entry_count)
 
 
-def audit_github_files(files: Iterable[dict], path_patterns: list[str]) -> AuditResult:
+def audit_github_files(
+    files: Iterable[dict],
+    path_patterns: list[str],
+    repo_root: Path | str | None = None,
+) -> AuditResult:
     added_entries: list[ResourceAddition] = []
     removed_entry_count = 0
 
@@ -351,6 +472,7 @@ def audit_github_files(files: Iterable[dict], path_patterns: list[str]) -> Audit
             [filename],
             filename_from_header=False,
             initial_file=filename,
+            repo_root=repo_root,
         )
         added_entries.extend(file_added_entries)
         removed_entry_count += file_removed_entry_count
@@ -388,6 +510,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma- or newline-separated data file globs/prefixes to audit.",
     )
     parser.add_argument(
+        "--repo-root",
+        help="Repository root for checking added YAML names against full file context.",
+    )
+    parser.add_argument(
         "--github-output",
         action="store_true",
         help="Print GitHub Actions output assignments.",
@@ -397,12 +523,16 @@ def main(argv: list[str] | None = None) -> int:
     path_patterns = parse_path_patterns(args.data_paths)
     if args.files_json:
         with open(args.files_json, encoding="utf-8") as files_json:
-            result = audit_github_files(json.load(files_json), path_patterns)
+            result = audit_github_files(
+                json.load(files_json),
+                path_patterns,
+                repo_root=args.repo_root,
+            )
     elif args.patch:
         with open(args.patch, encoding="utf-8") as patch_file:
-            result = audit_patch(patch_file, path_patterns)
+            result = audit_patch(patch_file, path_patterns, repo_root=args.repo_root)
     else:
-        result = audit_patch(sys.stdin, path_patterns)
+        result = audit_patch(sys.stdin, path_patterns, repo_root=args.repo_root)
 
     if args.github_output:
         print(_github_output(result), end="")

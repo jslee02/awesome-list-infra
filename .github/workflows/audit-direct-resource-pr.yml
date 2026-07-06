@@ -62,6 +62,13 @@ jobs:
               response.data
             );
 
+      - name: Check out pull request files
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
       - name: Audit changed resource entries
         id: audit
         shell: bash
@@ -70,6 +77,7 @@ jobs:
           awesome-list-audit-direct-resource-pr \
             --patch "$RUNNER_TEMP/pr.diff" \
             --data-paths "${{ inputs.data-paths }}" \
+            --repo-root "$GITHUB_WORKSPACE" \
             --github-output >> "$GITHUB_OUTPUT"
 
       - name: Comment and close direct resource PR

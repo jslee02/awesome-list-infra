@@ -1,3 +1,5 @@
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 from awesome_list_infra.audit_direct_resource_pr import (
@@ -11,6 +13,20 @@ PATTERNS = parse_path_patterns("data/*.yaml,data/*.yml,data/**/*.yaml")
 
 
 class AuditDirectResourcePrTest(unittest.TestCase):
+    def audit_with_repo_file(
+        self,
+        filename: str,
+        content: str,
+        patch_lines: list[str],
+    ):
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            path = repo_root / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+            return audit_patch(patch_lines, PATTERNS, repo_root=repo_root)
+
     def test_detects_net_new_data_entry_from_patch(self):
         result = audit_patch(
             [
@@ -212,6 +228,58 @@ class AuditDirectResourcePrTest(unittest.TestCase):
                 "+  - name: New Section\n",
             ],
             PATTERNS,
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
+    def test_detects_context_free_nested_section_resource_with_file_context(self):
+        result = self.audit_with_repo_file(
+            "data/motion-planning.yaml",
+            "\n".join(
+                [
+                    "sections:",
+                    "  - name: Parent",
+                    "    sections:",
+                    "      - name: Child",
+                    "        content:",
+                    "          - name: Existing Planner",
+                    "          - name: New Nested Planner",
+                    "",
+                ]
+            ),
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -6,1 +6,2 @@\n",
+                "           - name: Existing Planner\n",
+                "+          - name: New Nested Planner\n",
+            ],
+        )
+
+        self.assertTrue(result.direct_resource_pr)
+        self.assertEqual(result.additions[0].name, "New Nested Planner")
+
+    def test_ignores_context_free_nested_metadata_name_with_file_context(self):
+        result = self.audit_with_repo_file(
+            "data/motion-planning.yaml",
+            "\n".join(
+                [
+                    "sections:",
+                    "  - name: Parent",
+                    "    content:",
+                    "      - name: Existing Planner",
+                    "        features:",
+                    "          - name: Existing Feature",
+                    "          - name: New Feature",
+                    "",
+                ]
+            ),
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -6,1 +6,2 @@\n",
+                "           - name: Existing Feature\n",
+                "+          - name: New Feature\n",
+            ],
         )
 
         self.assertFalse(result.direct_resource_pr)

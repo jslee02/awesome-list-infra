@@ -130,6 +130,36 @@ net-new `- name:` entry under `data/` receive a kind redirect comment and are
 closed. Bot PRs are skipped by default so accepted suggestion automation and
 maintenance updates can still open resource or metadata PRs.
 
+### Stale Author-Action Issues
+
+Use this from repositories that label suggestion issues with `question` when
+waiting for author input:
+
+```yaml
+name: Stale Author-Action Issues
+
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  stale:
+    uses: jslee02/awesome-list-infra/.github/workflows/stale-author-action-issues.yml@main
+```
+
+The called workflow processes only issues that have both `suggestion` and
+`question` labels. It marks them `stale` after 14 days without activity, leaves
+a comment explaining what update is needed, and closes them after another 14
+days if they remain inactive. Updates or comments remove the stale label
+automatically.
+
 ### Refresh Metadata
 
 Use this from a repository that has `scripts/fetch_metadata.py`:

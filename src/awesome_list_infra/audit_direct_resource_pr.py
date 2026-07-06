@@ -16,7 +16,9 @@ from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 
 DIFF_HEADER_RE = re.compile(r"^diff --git a/(?P<old>.+?) b/(?P<new>.+)$")
-HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,\d+)? @@")
+HUNK_HEADER_RE = re.compile(
+    r"^@@ -(?P<old_start>\d+)(?:,\d+)? \+(?P<new_start>\d+)(?:,\d+)? @@"
+)
 ENTRY_RE = re.compile(r"^(?P<indent>\s*)-\s+name\s*:\s*(?P<name>.+?)\s*$")
 YAML_KEY_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?(?P<key>[A-Za-z_][\w-]*)\s*:")
 RESOURCE_FIELD_KEYS = {
@@ -314,9 +316,13 @@ def _collect_diff_lines(
     path_patterns: list[str],
     filename_from_header: bool,
     initial_file: str = "",
+    initial_old_file: str = "",
     repo_root: Path | str | None = None,
+    base_repo_root: Path | str | None = None,
 ) -> tuple[list[ResourceAddition], int]:
     current_file = initial_file
+    current_old_file = initial_old_file or initial_file
+    current_old_line_number = 0
     current_new_line_number = 0
     context_stack: list[tuple[int, str]] = []
     pending_entries: list[_PendingEntry] = []
@@ -324,7 +330,9 @@ def _collect_diff_lines(
     added_entries: list[ResourceAddition] = []
     removed_entry_count = 0
     repo_path = Path(repo_root) if repo_root is not None else None
+    base_repo_path = Path(base_repo_root) if base_repo_root is not None else None
     resource_name_line_cache: dict[str, set[int] | None] = {}
+    base_resource_name_line_cache: dict[str, set[int] | None] = {}
 
     for raw_line in lines:
         line = raw_line.rstrip("\n")
@@ -332,10 +340,12 @@ def _collect_diff_lines(
         header_match = DIFF_HEADER_RE.match(line) if filename_from_header else None
         if header_match:
             removed_entry_count += _flush_pending_entries(pending_entries, added_entries)
+            current_old_file = header_match.group("old")
             current_file = header_match.group("new")
             context_stack = []
             pending_entries = []
             pending_file_context_removals = []
+            current_old_line_number = 0
             current_new_line_number = 0
             continue
 
@@ -345,7 +355,12 @@ def _collect_diff_lines(
             pending_entries = []
             pending_file_context_removals = []
             hunk_match = HUNK_HEADER_RE.match(line)
-            current_new_line_number = int(hunk_match.group("start")) if hunk_match else 0
+            current_old_line_number = (
+                int(hunk_match.group("old_start")) if hunk_match else 0
+            )
+            current_new_line_number = (
+                int(hunk_match.group("new_start")) if hunk_match else 0
+            )
             continue
 
         if not current_file or not _matches_path(current_file, path_patterns):
@@ -356,9 +371,13 @@ def _collect_diff_lines(
             continue
 
         marker, payload = diff_payload
-        line_number = 0
+        old_line_number = 0
+        new_line_number = 0
+        if marker in {" ", "-"}:
+            old_line_number = current_old_line_number
+            current_old_line_number += 1
         if marker in {" ", "+"}:
-            line_number = current_new_line_number
+            new_line_number = current_new_line_number
             current_new_line_number += 1
 
         if not payload.strip():
@@ -380,11 +399,25 @@ def _collect_diff_lines(
             added_entries,
         )
 
-        if entry_match and marker == "+" and line_number:
+        if entry_match and marker == "-" and old_line_number:
+            is_base_resource_entry = _is_resource_entry_in_file(
+                base_repo_path,
+                current_old_file,
+                old_line_number,
+                base_resource_name_line_cache,
+            )
+            if is_base_resource_entry is True:
+                removed_entry_count += 1
+                continue
+
+            if is_base_resource_entry is False:
+                continue
+
+        if entry_match and marker == "+" and new_line_number:
             is_file_resource_entry = _is_resource_entry_in_file(
                 repo_path,
                 current_file,
-                line_number,
+                new_line_number,
                 resource_name_line_cache,
             )
             if is_file_resource_entry is True:
@@ -493,12 +526,14 @@ def audit_patch(
     lines: Iterable[str],
     path_patterns: list[str],
     repo_root: Path | str | None = None,
+    base_repo_root: Path | str | None = None,
 ) -> AuditResult:
     added_entries, removed_entry_count = _collect_diff_lines(
         lines,
         path_patterns,
         filename_from_header=True,
         repo_root=repo_root,
+        base_repo_root=base_repo_root,
     )
     return _result(added_entries, removed_entry_count)
 
@@ -507,6 +542,7 @@ def audit_github_files(
     files: Iterable[dict],
     path_patterns: list[str],
     repo_root: Path | str | None = None,
+    base_repo_root: Path | str | None = None,
 ) -> AuditResult:
     added_entries: list[ResourceAddition] = []
     removed_entry_count = 0
@@ -517,12 +553,15 @@ def audit_github_files(
             continue
 
         patch = str(file_info.get("patch") or "")
+        previous_filename = str(file_info.get("previous_filename") or filename)
         file_added_entries, file_removed_entry_count = _collect_diff_lines(
             patch.splitlines(),
             [filename],
             filename_from_header=False,
             initial_file=filename,
+            initial_old_file=previous_filename,
             repo_root=repo_root,
+            base_repo_root=base_repo_root,
         )
         added_entries.extend(file_added_entries)
         removed_entry_count += file_removed_entry_count
@@ -564,6 +603,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Repository root for checking added YAML names against full file context.",
     )
     parser.add_argument(
+        "--base-repo-root",
+        help="Repository root for checking removed YAML names against base file context.",
+    )
+    parser.add_argument(
         "--github-output",
         action="store_true",
         help="Print GitHub Actions output assignments.",
@@ -577,12 +620,23 @@ def main(argv: list[str] | None = None) -> int:
                 json.load(files_json),
                 path_patterns,
                 repo_root=args.repo_root,
+                base_repo_root=args.base_repo_root,
             )
     elif args.patch:
         with open(args.patch, encoding="utf-8") as patch_file:
-            result = audit_patch(patch_file, path_patterns, repo_root=args.repo_root)
+            result = audit_patch(
+                patch_file,
+                path_patterns,
+                repo_root=args.repo_root,
+                base_repo_root=args.base_repo_root,
+            )
     else:
-        result = audit_patch(sys.stdin, path_patterns, repo_root=args.repo_root)
+        result = audit_patch(
+            sys.stdin,
+            path_patterns,
+            repo_root=args.repo_root,
+            base_repo_root=args.base_repo_root,
+        )
 
     if args.github_output:
         print(_github_output(result), end="")

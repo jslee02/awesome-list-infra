@@ -27,6 +27,32 @@ class AuditDirectResourcePrTest(unittest.TestCase):
 
             return audit_patch(patch_lines, PATTERNS, repo_root=repo_root)
 
+    def audit_with_repo_files(
+        self,
+        filename: str,
+        base_content: str,
+        head_content: str,
+        patch_lines: list[str],
+    ):
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            base_repo_root = temp_path / "base"
+            repo_root = temp_path / "head"
+            for root, content in (
+                (base_repo_root, base_content),
+                (repo_root, head_content),
+            ):
+                path = root / filename
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+
+            return audit_patch(
+                patch_lines,
+                PATTERNS,
+                repo_root=repo_root,
+                base_repo_root=base_repo_root,
+            )
+
     def test_detects_net_new_data_entry_from_patch(self):
         result = audit_patch(
             [
@@ -311,6 +337,91 @@ class AuditDirectResourcePrTest(unittest.TestCase):
 
         self.assertFalse(result.direct_resource_pr)
         self.assertEqual(result.additions, [])
+
+    def test_ignores_nonadjacent_nested_resource_move_with_base_file_context(self):
+        result = self.audit_with_repo_files(
+            "data/motion-planning.yaml",
+            "\n".join(
+                [
+                    "sections:",
+                    "  - name: Parent",
+                    "    sections:",
+                    "      - name: Child",
+                    "        content:",
+                    "          - name: Old Nested Planner",
+                    "          - name: Existing Planner",
+                    "      - name: Other Child",
+                    "        content:",
+                    "          - name: Other Planner",
+                    "",
+                ]
+            ),
+            "\n".join(
+                [
+                    "sections:",
+                    "  - name: Parent",
+                    "    sections:",
+                    "      - name: Child",
+                    "        content:",
+                    "          - name: Existing Planner",
+                    "      - name: Other Child",
+                    "        content:",
+                    "          - name: Other Planner",
+                    "          - name: New Nested Planner",
+                    "",
+                ]
+            ),
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -6,2 +6,1 @@\n",
+                "-          - name: Old Nested Planner\n",
+                "           - name: Existing Planner\n",
+                "@@ -10,1 +9,2 @@\n",
+                "           - name: Other Planner\n",
+                "+          - name: New Nested Planner\n",
+            ],
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
+    def test_counts_resource_addition_when_removed_name_is_nested_metadata(self):
+        result = self.audit_with_repo_files(
+            "data/motion-planning.yaml",
+            "\n".join(
+                [
+                    "sections:",
+                    "  - name: Parent",
+                    "    content:",
+                    "      - name: Existing Planner",
+                    "        features:",
+                    "          - name: Old Feature",
+                    "",
+                ]
+            ),
+            "\n".join(
+                [
+                    "sections:",
+                    "  - name: Parent",
+                    "    content:",
+                    "      - name: Existing Planner",
+                    "        features: []",
+                    "      - name: New Planner",
+                    "",
+                ]
+            ),
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -5,2 +5,2 @@\n",
+                "-        features:\n",
+                "-          - name: Old Feature\n",
+                "+        features: []\n",
+                "+      - name: New Planner\n",
+            ],
+        )
+
+        self.assertTrue(result.direct_resource_pr)
+        self.assertEqual(result.additions[0].name, "New Planner")
 
     def test_ignores_context_free_nested_metadata_name_with_file_context(self):
         result = self.audit_with_repo_file(

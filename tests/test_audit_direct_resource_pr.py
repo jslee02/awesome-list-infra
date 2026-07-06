@@ -63,6 +63,25 @@ class AuditDirectResourcePrTest(unittest.TestCase):
         self.assertTrue(result.direct_resource_pr)
         self.assertEqual(result.additions[0].name, "CERT-FLOW")
 
+    def test_detects_indented_entry_with_blank_line_before_fields(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -20,6 +20,10 @@\n",
+                "       - name: Existing Planner\n",
+                "         github: owner/existing\n",
+                "+      - name: CERT-FLOW\n",
+                "+\n",
+                "+        github: Archerkattri/CERT-FLOW\n",
+                "+        description: Certified route planning.\n",
+                "       - name: Other Planner\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertTrue(result.direct_resource_pr)
+        self.assertEqual(result.additions[0].name, "CERT-FLOW")
+
     def test_ignores_indented_section_name_from_patch(self):
         result = audit_patch(
             [

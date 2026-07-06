@@ -197,6 +197,9 @@ def _collect_diff_lines(
             continue
 
         marker, payload = diff_payload
+        if not payload.strip():
+            continue
+
         indent = _pop_context_for_line(context_stack, payload)
         entry_match = ENTRY_RE.match(payload)
         removed_entry_count += _update_pending_entries(

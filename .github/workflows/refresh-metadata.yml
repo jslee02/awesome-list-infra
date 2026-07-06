@@ -38,6 +38,9 @@ on:
           data/*.yml
           data/**/*.yaml
           data/**/*.yml
+    secrets:
+      CREATE_PR_TOKEN:
+        required: false
 
 jobs:
   refresh:
@@ -78,6 +81,7 @@ jobs:
       - name: Create pull request
         uses: peter-evans/create-pull-request@v8
         with:
+          token: ${{ secrets.CREATE_PR_TOKEN || github.token }}
           commit-message: ${{ inputs.commit-message }}
           signoff: true
           add-paths: ${{ inputs.add-paths }}

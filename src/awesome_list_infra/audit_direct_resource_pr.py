@@ -13,8 +13,8 @@ from typing import Iterable
 
 
 DIFF_HEADER_RE = re.compile(r"^diff --git a/(?P<old>.+?) b/(?P<new>.+)$")
-ADDED_ENTRY_RE = re.compile(r"^\+- name\s*:\s*(?P<name>.+?)\s*$")
-REMOVED_ENTRY_RE = re.compile(r"^-- name\s*:\s*(?P<name>.+?)\s*$")
+ADDED_ENTRY_RE = re.compile(r"^\+\s*-\s+name\s*:\s*(?P<name>.+?)\s*$")
+REMOVED_ENTRY_RE = re.compile(r"^-\s*-\s+name\s*:\s*(?P<name>.+?)\s*$")
 
 
 @dataclass(frozen=True)

@@ -149,7 +149,8 @@ permissions:
 jobs:
   refresh:
     uses: jslee02/awesome-list-infra/.github/workflows/refresh-metadata.yml@main
-    secrets: inherit
+    secrets:
+      CREATE_PR_TOKEN: ${{ secrets.CREATE_PR_TOKEN }}
 ```
 
 The called workflow fetches GitHub metadata, regenerates `README.md`, validates
@@ -161,7 +162,9 @@ If you want maintenance PRs created by this workflow to trigger normal
 `pull_request` CI without extra manual approval, add a repository secret named
 `CREATE_PR_TOKEN` containing a fine-grained bot token or GitHub App token with
 `contents: write` and `pull-requests: write`. The workflow falls back to
-`GITHUB_TOKEN` when that secret is not present.
+`GITHUB_TOKEN` when that secret is not present. Map only this secret in caller
+workflows so unrelated repository secrets are not exposed to the reusable
+workflow.
 
 ## Migration Checklist
 

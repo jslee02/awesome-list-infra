@@ -15,6 +15,22 @@ from typing import Iterable
 DIFF_HEADER_RE = re.compile(r"^diff --git a/(?P<old>.+?) b/(?P<new>.+)$")
 ENTRY_RE = re.compile(r"^(?P<indent>\s*)-\s+name\s*:\s*(?P<name>.+?)\s*$")
 YAML_KEY_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?(?P<key>[A-Za-z_][\w-]*)\s*:")
+RESOURCE_FIELD_KEYS = {
+    "_meta",
+    "_subsection",
+    "archived",
+    "bitbucket",
+    "code_url",
+    "description",
+    "features",
+    "github",
+    "gitlab",
+    "languages",
+    "license",
+    "models",
+    "url",
+}
+SECTION_FIELD_KEYS = {"content", "sections"}
 
 
 @dataclass(frozen=True)
@@ -29,6 +45,13 @@ class AuditResult:
     reason: str
     additions: list[ResourceAddition]
     removed_entry_count: int
+
+
+@dataclass(frozen=True)
+class _PendingEntry:
+    marker: str
+    addition: ResourceAddition
+    indent: int
 
 
 def parse_path_patterns(value: str) -> list[str]:
@@ -93,6 +116,52 @@ def _track_context(context_stack: list[tuple[int, str]], payload: str, indent: i
     context_stack.append((indent, "content"))
 
 
+def _field_key(payload: str) -> str:
+    key_match = YAML_KEY_RE.match(payload)
+    return key_match.group("key") if key_match else ""
+
+
+def _update_pending_entries(
+    pending_entries: list[_PendingEntry],
+    marker: str,
+    payload: str,
+    indent: int,
+    added_entries: list[ResourceAddition],
+) -> int:
+    if not pending_entries:
+        return 0
+
+    key = _field_key(payload)
+    removed_entry_count = 0
+    remaining_entries: list[_PendingEntry] = []
+    current_entry_match = ENTRY_RE.match(payload)
+
+    for pending_entry in pending_entries:
+        if indent <= pending_entry.indent:
+            if (
+                current_entry_match
+                and indent == pending_entry.indent
+                and marker != pending_entry.marker
+            ):
+                remaining_entries.append(pending_entry)
+            continue
+
+        if key in SECTION_FIELD_KEYS:
+            continue
+
+        if key in RESOURCE_FIELD_KEYS and marker in {" ", pending_entry.marker}:
+            if pending_entry.marker == "+":
+                added_entries.append(pending_entry.addition)
+            else:
+                removed_entry_count += 1
+            continue
+
+        remaining_entries.append(pending_entry)
+
+    pending_entries[:] = remaining_entries
+    return removed_entry_count
+
+
 def _collect_diff_lines(
     lines: Iterable[str],
     path_patterns: list[str],
@@ -101,6 +170,7 @@ def _collect_diff_lines(
 ) -> tuple[list[ResourceAddition], int]:
     current_file = initial_file
     context_stack: list[tuple[int, str]] = []
+    pending_entries: list[_PendingEntry] = []
     added_entries: list[ResourceAddition] = []
     removed_entry_count = 0
 
@@ -111,6 +181,7 @@ def _collect_diff_lines(
         if header_match:
             current_file = header_match.group("new")
             context_stack = []
+            pending_entries = []
             continue
 
         if not current_file or not _matches_path(current_file, path_patterns):
@@ -123,6 +194,13 @@ def _collect_diff_lines(
         marker, payload = diff_payload
         indent = _pop_context_for_line(context_stack, payload)
         entry_match = ENTRY_RE.match(payload)
+        removed_entry_count += _update_pending_entries(
+            pending_entries,
+            marker,
+            payload,
+            indent,
+            added_entries,
+        )
 
         if entry_match and _is_resource_entry(indent, context_stack):
             if marker == "+":
@@ -137,6 +215,19 @@ def _collect_diff_lines(
             if marker == "-":
                 removed_entry_count += 1
                 continue
+
+        if entry_match and indent > 0 and marker in {"+", "-"}:
+            pending_entries.append(
+                _PendingEntry(
+                    marker=marker,
+                    addition=ResourceAddition(
+                        file=current_file,
+                        name=_clean_scalar(entry_match.group("name")),
+                    ),
+                    indent=indent,
+                )
+            )
+            continue
 
         _track_context(context_stack, payload, indent)
 

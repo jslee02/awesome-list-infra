@@ -45,6 +45,24 @@ class AuditDirectResourcePrTest(unittest.TestCase):
         self.assertTrue(result.direct_resource_pr)
         self.assertEqual(result.additions[0].name, "CERT-FLOW")
 
+    def test_detects_indented_entry_without_parent_context_from_patch(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -20,6 +20,9 @@\n",
+                "       - name: Existing Planner\n",
+                "         github: owner/existing\n",
+                "+      - name: CERT-FLOW\n",
+                "+        github: Archerkattri/CERT-FLOW\n",
+                "+        description: Certified route planning.\n",
+                "       - name: Other Planner\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertTrue(result.direct_resource_pr)
+        self.assertEqual(result.additions[0].name, "CERT-FLOW")
+
     def test_ignores_indented_section_name_from_patch(self):
         result = audit_patch(
             [
@@ -94,6 +112,30 @@ class AuditDirectResourcePrTest(unittest.TestCase):
                             "     content:",
                             "+      - name: New SLAM",
                             "+        github: owner/repo",
+                        ]
+                    ),
+                }
+            ],
+            PATTERNS,
+        )
+
+        self.assertTrue(result.direct_resource_pr)
+        self.assertEqual(result.additions[0].name, "New SLAM")
+
+    def test_detects_indented_entry_without_parent_context_from_github_files(self):
+        result = audit_github_files(
+            [
+                {
+                    "filename": "data/slam.yaml",
+                    "patch": "\n".join(
+                        [
+                            "@@ -20,6 +20,9 @@",
+                            "       - name: Existing SLAM",
+                            "         github: owner/existing",
+                            "+      - name: New SLAM",
+                            "+        github: owner/repo",
+                            "+        description: A new SLAM library.",
+                            "       - name: Other SLAM",
                         ]
                     ),
                 }
@@ -163,6 +205,21 @@ class AuditDirectResourcePrTest(unittest.TestCase):
                 " sections:\n",
                 "   - name: Vision\n",
                 "     content:\n",
+                "-      - name: Old Name\n",
+                "+      - name: New Name\n",
+                "         github: owner/repo\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
+    def test_ignores_indented_renames_without_parent_context(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/vision.yaml b/data/vision.yaml\n",
+                "@@ -20,7 +20,7 @@\n",
                 "-      - name: Old Name\n",
                 "+      - name: New Name\n",
                 "         github: owner/repo\n",

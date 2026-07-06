@@ -79,6 +79,27 @@ class AuditDirectResourcePrTest(unittest.TestCase):
         self.assertFalse(result.direct_resource_pr)
         self.assertEqual(result.additions, [])
 
+    def test_resets_context_between_hunks(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -1,5 +1,8 @@\n",
+                " sections:\n",
+                "   - name: Motion Planning\n",
+                "     content:\n",
+                "       - name: Existing Planner\n",
+                "@@ -80,5 +83,8 @@\n",
+                " sections:\n",
+                "+  - name: New Section\n",
+                "+    content:\n",
+                "   - name: Existing Section\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
     def test_detects_net_new_data_entry_from_github_files(self):
         result = audit_github_files(
             [

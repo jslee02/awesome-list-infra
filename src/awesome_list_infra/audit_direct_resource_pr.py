@@ -184,6 +184,11 @@ def _collect_diff_lines(
             pending_entries = []
             continue
 
+        if line.startswith("@@"):
+            context_stack = []
+            pending_entries = []
+            continue
+
         if not current_file or not _matches_path(current_file, path_patterns):
             continue
 

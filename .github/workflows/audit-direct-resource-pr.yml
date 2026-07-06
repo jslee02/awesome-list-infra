@@ -1,0 +1,134 @@
+name: Reusable Audit Direct Resource PRs
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.12"
+      infra-ref:
+        type: string
+        default: "main"
+      data-paths:
+        type: string
+        default: "data/*.yaml,data/*.yml,data/**/*.yaml,data/**/*.yml"
+      skip-bots:
+        type: boolean
+        default: true
+      close-pr:
+        type: boolean
+        default: true
+      suggestion-template:
+        type: string
+        default: "suggest-resource.yml"
+
+jobs:
+  audit:
+    if: |
+      github.event.pull_request &&
+      !github.event.pull_request.draft &&
+      (!inputs.skip-bots || github.event.pull_request.user.type != 'Bot')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install audit tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "git+https://github.com/jslee02/awesome-list-infra.git@${{ inputs.infra-ref }}"
+
+      - name: Fetch pull request diff
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const response = await github.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              headers: {
+                accept: 'application/vnd.github.v3.diff',
+              },
+            });
+            fs.writeFileSync(
+              `${process.env.RUNNER_TEMP}/pr.diff`,
+              response.data
+            );
+
+      - name: Audit changed resource entries
+        id: audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          awesome-list-audit-direct-resource-pr \
+            --patch "$RUNNER_TEMP/pr.diff" \
+            --data-paths "${{ inputs.data-paths }}" \
+            --github-output >> "$GITHUB_OUTPUT"
+
+      - name: Comment and close direct resource PR
+        if: steps.audit.outputs.direct_resource_pr == 'true'
+        uses: actions/github-script@v9
+        env:
+          CLOSE_PR: ${{ inputs.close-pr }}
+          RESOURCE_NAMES: ${{ steps.audit.outputs.resource_names }}
+          RESOURCE_FILES: ${{ steps.audit.outputs.resource_files }}
+          SUGGESTION_TEMPLATE: ${{ inputs.suggestion-template }}
+        with:
+          script: |
+            const marker = '<!-- direct-resource-pr-audit -->';
+            const issue_number = context.payload.pull_request.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const names = process.env.RESOURCE_NAMES || 'the submitted resource';
+            const files = process.env.RESOURCE_FILES || 'data files';
+            const suggestionUrl = `https://github.com/${owner}/${repo}/issues/new?template=${process.env.SUGGESTION_TEMPLATE}`;
+            const body = [
+              marker,
+              `Thanks for taking the time to suggest **${names}**.`,
+              '',
+              'New resources are submitted through the **Suggest a Resource** issue form instead of direct pull requests. That form lets the automation evaluate the resource, apply the right labels, and create the YAML/README PR automatically when the suggestion is accepted.',
+              '',
+              `Please resubmit this resource here: ${suggestionUrl}`,
+              '',
+              `I am closing this PR because it adds a new resource entry in \`${files}\` and bypasses that submission flow. This is only about keeping contributions consistent; you are welcome to paste the details from this PR into the suggestion issue.`,
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find(comment => comment.body && comment.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+
+            if (process.env.CLOSE_PR === 'true' && context.payload.pull_request.state !== 'closed') {
+              await github.rest.pulls.update({
+                owner,
+                repo,
+                pull_number: issue_number,
+                state: 'closed',
+              });
+            }

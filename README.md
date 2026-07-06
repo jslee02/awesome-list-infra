@@ -100,6 +100,36 @@ The called workflow blocks direct human edits to `README.md` unless the PR also
 changes one of the configured source paths (`awesome-list.yaml`, `data/`,
 `scripts/`, or `schema/` by default).
 
+### Audit Direct Resource PRs
+
+Use this from an awesome-list repository that accepts new resources through the
+`Suggest a Resource` issue form:
+
+```yaml
+name: Audit Direct Resource PRs
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - "data/**"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  audit:
+    uses: jslee02/awesome-list-infra/.github/workflows/audit-direct-resource-pr.yml@main
+```
+
+The called workflow inspects the pull request diff through the GitHub API
+without checking out or executing contributor code. Human PRs that add a
+net-new `- name:` entry under `data/` receive a kind redirect comment and are
+closed. Bot PRs are skipped by default so accepted suggestion automation and
+maintenance updates can still open resource or metadata PRs.
+
 ### Refresh Metadata
 
 Use this from a repository that has `scripts/fetch_metadata.py`:
@@ -119,12 +149,19 @@ permissions:
 jobs:
   refresh:
     uses: jslee02/awesome-list-infra/.github/workflows/refresh-metadata.yml@main
+    secrets: inherit
 ```
 
 The called workflow fetches GitHub metadata, regenerates `README.md`, validates
 the result, and opens a signed-off maintenance PR only when expected metadata
 or README files changed. By default it stages `README.md` plus top-level and
 nested YAML files under `data/`.
+
+If you want maintenance PRs created by this workflow to trigger normal
+`pull_request` CI without extra manual approval, add a repository secret named
+`CREATE_PR_TOKEN` containing a fine-grained bot token or GitHub App token with
+`contents: write` and `pull-requests: write`. The workflow falls back to
+`GITHUB_TOKEN` when that secret is not present.
 
 ## Migration Checklist
 

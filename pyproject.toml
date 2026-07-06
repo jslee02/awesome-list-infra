@@ -22,6 +22,7 @@ awesome-list-generate = "awesome_list_infra.readme:generate_main"
 awesome-list-validate = "awesome_list_infra.readme:validate_main"
 awesome-list-import-readme = "awesome_list_infra.readme:import_main"
 awesome-list-fetch-metadata = "awesome_list_infra.readme:fetch_metadata_main"
+awesome-list-audit-direct-resource-pr = "awesome_list_infra.audit_direct_resource_pr:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

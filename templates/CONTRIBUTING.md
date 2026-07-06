@@ -2,7 +2,9 @@
 
 ## Suggesting a New Resource
 
-Please use the GitHub issue form for new suggestions:
+Please use the GitHub issue form for new suggestions. Direct pull requests that
+add new resource entries are closed automatically so every suggestion goes
+through the same evaluation and auto-PR workflow:
 
 - Open `Suggest a Resource`
 - Fill in the category, description, and repository fields as completely as you can

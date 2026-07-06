@@ -142,6 +142,39 @@ class AuditDirectResourcePrTest(unittest.TestCase):
         self.assertFalse(result.direct_resource_pr)
         self.assertEqual(result.additions, [])
 
+    def test_ignores_nested_metadata_name_from_patch(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -20,8 +20,10 @@\n",
+                " sections:\n",
+                "   - name: Motion Planning\n",
+                "     content:\n",
+                "       - name: Existing Planner\n",
+                "         features:\n",
+                "+          - name: New Feature\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
+    def test_ignores_nested_metadata_name_without_content_context_from_patch(self):
+        result = audit_patch(
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -20,6 +20,7 @@\n",
+                "       - name: Existing Planner\n",
+                "         models:\n",
+                "+          - name: New Model\n",
+            ],
+            PATTERNS,
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
     def test_resets_context_between_hunks(self):
         result = audit_patch(
             [
@@ -241,6 +274,30 @@ class AuditDirectResourcePrTest(unittest.TestCase):
                             " sections:",
                             "+  - name: SLAM",
                             "+    content:",
+                        ]
+                    ),
+                }
+            ],
+            PATTERNS,
+        )
+
+        self.assertFalse(result.direct_resource_pr)
+        self.assertEqual(result.additions, [])
+
+    def test_ignores_nested_metadata_name_from_github_files(self):
+        result = audit_github_files(
+            [
+                {
+                    "filename": "data/slam.yaml",
+                    "patch": "\n".join(
+                        [
+                            "@@ -20,8 +20,10 @@",
+                            " sections:",
+                            "   - name: SLAM",
+                            "     content:",
+                            "       - name: Existing SLAM",
+                            "         features:",
+                            "+          - name: New Feature",
                         ]
                     ),
                 }

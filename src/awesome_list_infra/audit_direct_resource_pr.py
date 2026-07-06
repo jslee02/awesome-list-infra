@@ -31,6 +31,7 @@ RESOURCE_FIELD_KEYS = {
     "url",
 }
 SECTION_FIELD_KEYS = {"content", "sections"}
+IGNORED_CONTEXT_KEYS = {"name"}
 
 
 @dataclass(frozen=True)
@@ -101,21 +102,37 @@ def _pop_context_for_line(context_stack: list[tuple[int, str]], payload: str) ->
     return indent
 
 
+def _nearest_context(
+    indent: int, context_stack: list[tuple[int, str]]
+) -> tuple[int, str] | None:
+    for context in reversed(context_stack):
+        if indent > context[0]:
+            return context
+
+    return None
+
+
 def _is_resource_entry(indent: int, context_stack: list[tuple[int, str]]) -> bool:
     if indent == 0:
         return True
 
-    return any(key == "content" and indent > context_indent for context_indent, key in context_stack)
+    context = _nearest_context(indent, context_stack)
+    return bool(context and context[1] == "content")
 
 
 def _is_section_entry(indent: int, context_stack: list[tuple[int, str]]) -> bool:
-    in_sections = any(key == "sections" and indent > context_indent for context_indent, key in context_stack)
-    return in_sections and not _is_resource_entry(indent, context_stack)
+    context = _nearest_context(indent, context_stack)
+    return bool(context and context[1] == "sections")
+
+
+def _is_nested_field_entry(indent: int, context_stack: list[tuple[int, str]]) -> bool:
+    context = _nearest_context(indent, context_stack)
+    return bool(context and context[1] not in SECTION_FIELD_KEYS)
 
 
 def _track_context(context_stack: list[tuple[int, str]], payload: str, indent: int) -> None:
     key_match = YAML_KEY_RE.match(payload)
-    if not key_match or key_match.group("key") not in SECTION_FIELD_KEYS:
+    if not key_match or key_match.group("key") in IGNORED_CONTEXT_KEYS:
         return
 
     context_stack.append((indent, key_match.group("key")))
@@ -252,6 +269,9 @@ def _collect_diff_lines(
 
         if entry_match and indent > 0 and marker in {"+", "-"}:
             if _is_section_entry(indent, context_stack):
+                continue
+
+            if _is_nested_field_entry(indent, context_stack):
                 continue
 
             pending_entries.append(

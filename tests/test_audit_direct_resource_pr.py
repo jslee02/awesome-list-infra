@@ -285,6 +285,27 @@ class AuditDirectResourcePrTest(unittest.TestCase):
         self.assertTrue(result.direct_resource_pr)
         self.assertEqual(result.additions[0].name, "New Nested Planner")
 
+    def test_handles_cyclic_yaml_alias_with_file_context(self):
+        result = self.audit_with_repo_file(
+            "data/motion-planning.yaml",
+            "\n".join(
+                [
+                    "sections: &sections [*sections]",
+                    "content:",
+                    "  - name: New Planner",
+                    "",
+                ]
+            ),
+            [
+                "diff --git a/data/motion-planning.yaml b/data/motion-planning.yaml\n",
+                "@@ -2,0 +3,1 @@\n",
+                "+  - name: New Planner\n",
+            ],
+        )
+
+        self.assertTrue(result.direct_resource_pr)
+        self.assertEqual(result.additions[0].name, "New Planner")
+
     def test_ignores_context_free_nested_section_rename_with_file_context(self):
         result = self.audit_with_repo_file(
             "data/motion-planning.yaml",

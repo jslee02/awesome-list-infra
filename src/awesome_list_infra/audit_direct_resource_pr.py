@@ -176,26 +176,41 @@ def _name_key_line(mapping: MappingNode) -> int | None:
 def _collect_resource_name_lines(
     node: Node,
     parent_key: str = "",
+    visiting: set[int] | None = None,
 ) -> set[int]:
     resource_name_lines: set[int] = set()
-
-    if isinstance(node, SequenceNode):
-        for item in node.value:
-            if isinstance(item, MappingNode) and parent_key in {"", "content"}:
-                name_line = _name_key_line(item)
-                if name_line is not None:
-                    resource_name_lines.add(name_line)
-            resource_name_lines.update(_collect_resource_name_lines(item, parent_key))
-
+    visiting = visiting if visiting is not None else set()
+    node_id = id(node)
+    if node_id in visiting:
         return resource_name_lines
 
-    if isinstance(node, MappingNode):
-        for key_node, value_node in node.value:
-            resource_name_lines.update(
-                _collect_resource_name_lines(value_node, _scalar_value(key_node))
-            )
+    visiting.add(node_id)
+    try:
+        if isinstance(node, SequenceNode):
+            for item in node.value:
+                if isinstance(item, MappingNode) and parent_key in {"", "content"}:
+                    name_line = _name_key_line(item)
+                    if name_line is not None:
+                        resource_name_lines.add(name_line)
+                resource_name_lines.update(
+                    _collect_resource_name_lines(item, parent_key, visiting)
+                )
 
-    return resource_name_lines
+            return resource_name_lines
+
+        if isinstance(node, MappingNode):
+            for key_node, value_node in node.value:
+                resource_name_lines.update(
+                    _collect_resource_name_lines(
+                        value_node,
+                        _scalar_value(key_node),
+                        visiting,
+                    )
+                )
+
+        return resource_name_lines
+    finally:
+        visiting.remove(node_id)
 
 
 def _resource_name_lines_for_file(

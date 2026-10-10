@@ -80,8 +80,10 @@ jobs:
             --no-progress
             --suggest
             --archive wayback
-            --format json
             ${{ inputs.markdown-glob }}
+          # Set as an input, not in args: with the default markdown format the
+          # action appends a markdown line to the output, corrupting the JSON.
+          format: json
           fail: false
           output: lychee/results.json
 

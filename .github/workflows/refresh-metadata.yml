@@ -32,12 +32,11 @@ on:
         default: "maintenance"
       add-paths:
         type: string
+        # git add fails on a pathspec that matches nothing, so use directories,
+        # not globs like data/*.yml that only some repos have.
         default: |
           README.md
-          data/*.yaml
-          data/*.yml
-          data/**/*.yaml
-          data/**/*.yml
+          data
     secrets:
       CREATE_PR_TOKEN:
         required: false

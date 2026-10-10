@@ -9,6 +9,15 @@ on:
       skip-bots:
         type: boolean
         default: true
+      close-pr:
+        type: boolean
+        default: false
+        description: >-
+          Comment and close README-only PRs from outside contributors. Needs a
+          pull_request_target caller with pull-requests and issues write access.
+      suggestion-template:
+        type: string
+        default: "suggest-resource.yml"
 
 jobs:
   check-readme:
@@ -19,12 +28,16 @@ jobs:
         uses: actions/github-script@v9
         env:
           SOURCE_PATHS: ${{ inputs.source-paths }}
+          CLOSE_PR: ${{ inputs.close-pr }}
+          SUGGESTION_TEMPLATE: ${{ inputs.suggestion-template }}
         with:
           script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
             const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
+              owner,
+              repo,
+              pull_number: pr.number,
               per_page: 100,
             });
 
@@ -38,12 +51,43 @@ jobs:
             );
 
             const hasSourceChanges = files.some(file => matchesSourcePath(file.filename));
-
-            if (!hasSourceChanges) {
-              core.setFailed(
-                'README.md must not be edited directly.\n\n' +
-                'This repository uses a data-first workflow and auto-generates README.md from YAML files.\n\n' +
-                'To suggest a new resource, open an issue instead:\n' +
-                `https://github.com/${context.repo.owner}/${context.repo.repo}/issues/new/choose`
-              );
+            if (hasSourceChanges) {
+              return;
             }
+
+            const suggestionUrl = `https://github.com/${owner}/${repo}/issues/new?template=${process.env.SUGGESTION_TEMPLATE}`;
+            const insider = ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(pr.author_association);
+            if (process.env.CLOSE_PR === 'true' && !insider && pr.state === 'open') {
+              const marker = '<!-- protect-readme -->';
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number: pr.number,
+                per_page: 100,
+              });
+              if (!comments.some(comment => comment.body && comment.body.includes(marker))) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: pr.number,
+                  body: [
+                    marker,
+                    'Thanks for the contribution!',
+                    '',
+                    '`README.md` is generated from `data/*.yaml`, so direct edits to it get overwritten.',
+                    '',
+                    `- **New resource?** Please use the suggestion form; automation evaluates it and opens the PR for you: ${suggestionUrl}`,
+                    '- **Fix to an existing entry?** Edit the matching `data/*.yaml` file instead and open a new PR.',
+                    '',
+                    'Closing this PR for that reason only. You are welcome to reuse its details.',
+                  ].join('\n'),
+                });
+              }
+              await github.rest.pulls.update({ owner, repo, pull_number: pr.number, state: 'closed' });
+            }
+
+            core.setFailed(
+              'README.md must not be edited directly.\n\n' +
+              'This repository uses a data-first workflow and auto-generates README.md from YAML files.\n\n' +
+              `To suggest a new resource, open an issue instead:\n${suggestionUrl}`
+            );

@@ -100,6 +100,31 @@ The called workflow blocks direct human edits to `README.md` unless the PR also
 changes one of the configured source paths (`awesome-list.yaml`, `data/`,
 `scripts/`, or `schema/` by default).
 
+Plain `pull_request` runs from first-time contributors wait for maintainer
+approval, so README-only PRs can sit unnoticed. To have them commented on and
+closed automatically, trigger on `pull_request_target` and set `close-pr: true`.
+The workflow only reads the PR's file list through the API and never checks out
+contributor code. Owners, members, and collaborators are never closed.
+
+```yaml
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - "README.md"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  check-readme:
+    uses: jslee02/awesome-list-infra/.github/workflows/protect-readme.yml@main
+    with:
+      close-pr: true
+```
+
 ### Audit Direct Resource PRs
 
 Use this from an awesome-list repository that accepts new resources through the
@@ -185,8 +210,8 @@ jobs:
 
 The called workflow fetches GitHub metadata, regenerates `README.md`, validates
 the result, and opens a signed-off maintenance PR only when expected metadata
-or README files changed. By default it stages `README.md` plus top-level and
-nested YAML files under `data/`.
+or README files changed. By default it stages `README.md` and the `data`
+directory.
 
 If you want maintenance PRs created by this workflow to trigger normal
 `pull_request` CI without extra manual approval, add a repository secret named

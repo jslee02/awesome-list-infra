@@ -72,6 +72,17 @@ class ApplyFixesSafetyTest(unittest.TestCase):
             self.assertEqual(apply_fixes({"http://old.example/a": "https://new.example/a,b"}, root), {})
             self.assertEqual(data.read_text(encoding="utf-8"), original)
 
+    def test_only_the_unsafe_url_is_rejected(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "data").mkdir()
+            data = root / "data" / "tools.yaml"
+            data.write_text("- url: 'http://old.example/a'\n- url: http://old.example/b\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/O'Reilly",
+                         "http://old.example/b": "https://new.example/b"}, root)
+            self.assertEqual(data.read_text(encoding="utf-8"),
+                             "- url: 'http://old.example/a'\n- url: https://new.example/b\n")
+
     def test_url_followed_by_parenthesis_is_not_a_prefix_match(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

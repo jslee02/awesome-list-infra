@@ -103,19 +103,31 @@ def unsafe_data_fixes(fixes: dict[str, str], root: Path) -> set[str]:
 
     Dropping them from the Markdown too keeps a generated README in sync with its data.
     """
-    pattern = build_replacement_pattern(fixes)
+    def corrupts(content: str, subset: dict[str, str]) -> bool:
+        pattern = build_replacement_pattern(subset)
 
-    def fix(text: str) -> str:
-        return pattern.sub(lambda m: fixes[m.group(0)], text)
+        def fix(text: str) -> str:
+            return pattern.sub(lambda m: subset[m.group(0)], text)
+
+        new_content = fix(content)
+        return new_content != content and not only_strings_changed(content, new_content, fix)
 
     rejected: set[str] = set()
     for path in fix_targets(root):
-        if path.suffix in (".yaml", ".yml"):
-            content = path.read_text(encoding="utf-8")
-            new_content = fix(content)
-            if new_content != content and not only_strings_changed(content, new_content, fix):
-                print(f"  not fixing URLs in {path}: the replacement would corrupt the YAML", file=sys.stderr)
-                rejected |= set(pattern.findall(content))
+        if path.suffix not in (".yaml", ".yml"):
+            continue
+        content = path.read_text(encoding="utf-8")
+        if not corrupts(content, fixes):
+            continue
+        # Reject only the URLs that are unsafe on their own; if the rest still
+        # interact badly, reject everything this file would have changed.
+        in_file = set(build_replacement_pattern(fixes).findall(content))
+        bad = {url for url in in_file if corrupts(content, {url: fixes[url]})}
+        rest = {url: fixes[url] for url in in_file - bad}
+        if rest and corrupts(content, rest):
+            bad = in_file
+        print(f"  not fixing {sorted(bad)} in {path}: the replacement would corrupt the YAML", file=sys.stderr)
+        rejected |= bad
     return rejected
 
 
@@ -123,7 +135,8 @@ def apply_fixes(
     fixes: dict[str, str],
     root: Path,
 ) -> dict[str, list[tuple[str, str]]]:
-    fixes = {url: new for url, new in fixes.items() if url not in unsafe_data_fixes(fixes, root)}
+    rejected = unsafe_data_fixes(fixes, root)
+    fixes = {url: new for url, new in fixes.items() if url not in rejected}
     if not fixes:
         return {}
     pattern = build_replacement_pattern(fixes)

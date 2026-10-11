@@ -72,6 +72,9 @@ permissions:
 jobs:
   check-links:
     uses: jslee02/awesome-list-infra/.github/workflows/check-links.yml@main
+    with:
+      # For lists whose README is generated; omit otherwise.
+      generate-command: python3 scripts/generate_readme.py
 ```
 
 Pull requests fail only on definitive broken links. Scheduled runs try to

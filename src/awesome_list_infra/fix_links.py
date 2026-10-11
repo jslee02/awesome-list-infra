@@ -118,7 +118,7 @@ def only_strings_changed(old_text: str, new_text: str, fix) -> bool:
 
 
 def unsafe_data_fixes(fixes: dict[str, str], root: Path) -> set[str]:
-    """URLs whose replacement would corrupt a YAML file, so they're left unfixed everywhere.
+    """URLs that can't be fixed cleanly in a YAML file, so they're left unfixed everywhere.
 
     Dropping them from the Markdown too keeps a generated README in sync with its data.
     """
@@ -136,6 +136,13 @@ def unsafe_data_fixes(fixes: dict[str, str], root: Path) -> set[str]:
         if path.suffix not in (".yaml", ".yml"):
             continue
         content = read_text(path)
+        # A URL present in the data that no match here would replace (it continues past the
+        # fixed prefix, or sits in compact flow YAML like "url: x,next: y") can't be fixed
+        # consistently, so leave it everywhere rather than fix only the generated Markdown.
+        matched = set(build_replacement_pattern(fixes).findall(content))
+        if unmatched := {url for url in fixes if url in content} - matched:
+            print(f"  not fixing {sorted(unmatched)}: {path} has them where they can't be replaced cleanly", file=sys.stderr)
+            rejected |= unmatched
         if not corrupts(content, fixes):
             continue
         # Reject only the URLs that are unsafe on their own; if the rest still

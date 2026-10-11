@@ -129,6 +129,20 @@ class ApplyFixesRobustnessTest(unittest.TestCase):
             self.assertEqual(data.read_bytes(), b"- name: A\r\n  url: https://new.example/a\r\n")
 
 
+class ConsistencyTest(unittest.TestCase):
+    def test_compact_flow_yaml_url_is_left_alone_everywhere(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "data").mkdir()
+            data = root / "data" / "tools.yaml"
+            original = "- {url: http://old.example/a,description: X}\n"
+            data.write_text(original, encoding="utf-8")
+            readme = root / "README.md"
+            readme.write_text("[A](http://old.example/a)\n", encoding="utf-8")
+            self.assertEqual(apply_fixes({"http://old.example/a": "https://new.example/a"}, root), {})
+            self.assertEqual(data.read_text(encoding="utf-8"), original)
+            self.assertEqual(readme.read_text(encoding="utf-8"), "[A](http://old.example/a)\n")
+
 class RegenerationTest(unittest.TestCase):
     def test_fixes_undone_by_the_generator_are_found(self):
         with TemporaryDirectory() as temp_dir:

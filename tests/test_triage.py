@@ -243,6 +243,13 @@ class EntryTest(unittest.TestCase):
         desc, trimmed = triage.pick_description(long, "")
         self.assertTrue(trimmed)
         self.assertLessEqual(len(desc), 100)
+        # Seen on a real suggestion: a cut at 99 characters left "... outlier rejection for."
+        fusioncore = ("ROS 2 UKF fusing GPS, IMU, and wheel odometry with adaptive noise and GPS outlier rejection "
+                      "for robust outdoor localization.")
+        self.assertEqual(triage.pick_description(fusioncore, ""), ("ROS 2 UKF fusing GPS, IMU, and wheel odometry "
+                         "with adaptive noise and GPS outlier rejection.", True))
+        self.assertEqual(triage.pick_description("Tools for " * 12, ""), ("Tools for Tools for Tools for Tools for "
+                         "Tools for Tools for Tools for Tools for Tools for Tools.", True))
         self.assertEqual(triage.pick_description("Too short", "Time-indexed storage for robotics data."),
                          ("Time-indexed storage for robotics data.", False))
 

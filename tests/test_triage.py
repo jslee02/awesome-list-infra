@@ -608,5 +608,19 @@ class Round10Test(unittest.TestCase):
         self.assertEqual((kept, evidence), ("Website: https://x.example", "used in two courses"))
 
 
+class Round11Test(unittest.TestCase):
+    def test_free_form_body_evidence_counts(self):
+        s = triage.parse_issue("[Suggestion] SimTool", "Simulator: https://simtool.example\nEvidence: used in two courses",
+                               TODAY)
+        self.assertEqual(s.evidence, "used in two courses")
+        self.assertEqual(triage.decide(s, None, ctx()).state, "needs-review")
+
+    def test_latest_entry_pr_decides(self):
+        merged = {"number": 100, "state": "closed", "merged_at": "2026-01-01T00:00:00Z", "closed_at": "2026-01-01T00:00:00Z"}
+        declined = {"number": 200, "state": "closed", "merged_at": None, "closed_at": "2026-06-01T00:00:00Z"}
+        self.assertEqual(triage.standing_decline([merged, declined], [], False), 200)
+        self.assertIsNone(triage.standing_decline([declined, {**merged, "number": 300}], [], False))
+
+
 if __name__ == "__main__":
     unittest.main()

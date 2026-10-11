@@ -235,7 +235,7 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
                 reply_repos.append(found)
     affiliation = fields.get("affiliation") or kv.get("affiliation") or next(
         (m[1] for c in replies if (m := re.search(r"affiliation\s*:\s*(.+)", c, re.I))), "")
-    evidence = fields.get("evidence of use") or reply_evidence
+    evidence = fields.get("evidence of use") or ("" if is_form else split_evidence(body)[1]) or reply_evidence
     title_name = re.sub(r"^\s*(\[suggestion\]|suggest(ion)?:?|add)\s*", "", title or "", flags=re.I)
     return Suggestion(
         # Names never need URLs; dropping them keeps URL-form closing references out of commits.
@@ -657,9 +657,11 @@ def standing_decline(entry_prs: list[dict], events: list[dict], pick: bool) -> i
     """The entry PR a maintainer declined (closed unmerged), unless an entry PR is open or merged,
     or maintainer-pick is on the issue and was applied after the decline. A pick from before the
     decline, or one since removed, doesn't override it."""
-    if any(pr["state"] == "open" or pr["merged_at"] for pr in entry_prs) or not entry_prs:
+    if not entry_prs:
         return None
-    latest = max(entry_prs, key=lambda pr: pr["closed_at"] or "")
+    latest = max(entry_prs, key=lambda pr: pr["number"])  # an older merge doesn't hide a newer decline
+    if latest["state"] == "open" or latest["merged_at"]:
+        return None
     picks = [e["created_at"] for e in events
              if e["event"] == "labeled" and (e.get("label") or {}).get("name") == "maintainer-pick"]
     return None if pick and picks and max(picks) > (latest["closed_at"] or "") else latest["number"]
@@ -898,16 +900,26 @@ def triage(number: int, dry_run: bool) -> str:
     # Earlier open suggestions of the same repository, so two entry PRs never race to merge.
     pending = {}
     same_repo = {s.repo.lower(), r.full_name.lower()} if r else set()
+    def resolve(slug: str) -> str | None:
+        """The repository a peer's slug names, as far as it matters here: the slug if it is this
+        repository, its current name if it could be an alias (same owner or name: a rename or a
+        transfer), "" if it is clearly another repository, None if it doesn't exist. Resolving
+        unrelated peers would cost a request each, multiplied across a sweep."""
+        if slug.lower() in same_repo:
+            return slug
+        owner, name = slug.lower().split("/")
+        if any(owner == known.split("/")[0] or name == known.split("/")[1] for known in same_repo):
+            return canonical_repo(slug)
+        return ""
+
     for i in open_issues if r else []:
         older = parse_issue(i["title"], i.get("body") or "", POLICY_START)
-        slug = older.repo
-        if slug and slug.lower() not in same_repo:
-            slug = canonical_repo(slug)  # renamed, transferred, or gone
-        if not slug:  # missing or wrong in the body; the author may have corrected it in a reply
+        slug = resolve(older.repo) if older.repo else None
+        if slug is None:  # missing or gone in the body; the author may have corrected it in a reply
             replies = [c["body"] for c in paged(f"/repos/{REPO}/issues/{i['number']}/comments")
                        if c["user"]["login"] == i["user"]["login"]]
             older = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies)
-            slug = next(filter(None, map(canonical_repo, older.reply_repos)), None)
+            slug = next(filter(None, map(resolve, older.reply_repos)), None)
         if slug and slug.lower() in same_repo and ranks_ahead(peer := normalized(i), number, active):
             # Keep the suggestion first in the queue (number, in triage): the others will close as its duplicates.
             best = pending.get(r.full_name.lower())  # one key for every alias of this repository
@@ -926,6 +938,8 @@ def triage(number: int, dry_run: bool) -> str:
     live = api("GET", f"/repos/{REPO}/issues/{number}")
     if live["state"] != "open":
         return f"#{number}: closed while triaging; left as is"
+    if (live["title"], live.get("body") or "") != (issue["title"], issue.get("body") or ""):
+        return f"#{number}: edited while triaging; the queued run for that edit will decide"
     labels = {l["name"] for l in live["labels"]}
     if ("maintainer-pick" in labels) != ctx.pick:
         ctx.pick = "maintainer-pick" in labels

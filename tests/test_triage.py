@@ -254,8 +254,9 @@ class EntryTest(unittest.TestCase):
                            ("Tools made for,", " and with, everyone")):
             prefix = "x" * (98 - len(kept)) + " "  # prefix + kept is exactly 99 characters: the cut falls after it
             self.assertEqual(triage.pick_description(prefix + kept + rest, ""), (prefix + kept.rstrip(",") + "…", True))
-        word = "x" * 98 + "y"  # a word ending exactly at 99 characters keeps its place before a comma
-        self.assertEqual(triage.pick_description(word + ", and more", ""), (word + "…", True))
+        word = "x" * 98 + "y"  # a word ending exactly at 99 characters stays, before closing punctuation too
+        for after in (", and more", ',\" said more', ") and more"):
+            self.assertEqual(triage.pick_description(word + after, ""), (word + "…", True))
         self.assertEqual(triage.pick_description("z" * 150, ""), ("z" * 99 + "…", True))  # one overlong token
         for head, tail in (("2", ".0"), ("1", ",000"), ("https", "://example.com/docs")):
             prefix = "x" * (90 - len(head)) + " ROS ver "  # the token's inner punctuation sits right at the cut

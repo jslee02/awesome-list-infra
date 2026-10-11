@@ -53,8 +53,10 @@ def get_unfixable(report: dict, fixed_urls: set[str]) -> dict[str, list[dict]]:
     return unfixable
 
 
-# A match must end where the URL ends, so fixing ".../a" leaves ".../abc" alone.
-URL_CONTINUES = r"(?![A-Za-z0-9_\-.~%!$&*+,;=:@/?#])"
+# A match must end where the URL ends, so fixing ".../a" leaves ".../abc" and
+# ".../a(1)" alone. ")" and "'" can't be listed: they close Markdown links and
+# single-quoted YAML values.
+URL_CONTINUES = r"(?![A-Za-z0-9_\-.~%!$&*+,;=:@/?#(])"
 
 
 def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:
@@ -62,30 +64,74 @@ def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:
     return re.compile("(?:" + "|".join(re.escape(url) for url in sorted_urls) + ")" + URL_CONTINUES)
 
 
-def parses_as_yaml(text: str) -> bool:
+def fix_targets(root: Path) -> list[Path]:
+    """Markdown plus the data and config files a generated README is built from."""
+    sources = [f for glob in ("data/**/*.yaml", "data/**/*.yml", "awesome-list.yaml") for f in root.glob(glob)]
+    return [
+        f for f in sorted(set(root.rglob("*.md")) | set(sources))
+        if not any(part.startswith(".") or part == "lychee" for part in f.relative_to(root).parts)
+    ]
+
+
+def only_strings_changed(old_text: str, new_text: str, fix) -> bool:
+    """Whether new_text parses to the same YAML tree with each string passed through `fix`.
+
+    Catches replacements that break quoting or reshape the document (a URL with a
+    comma inside a flow sequence, for example).
+    """
     import yaml  # imported here so Markdown-only lists don't need PyYAML
 
     try:
-        yaml.safe_load(text)
+        old, new = yaml.safe_load(old_text), yaml.safe_load(new_text)
     except yaml.YAMLError:
         return False
-    return True
+
+    def same(a, b) -> bool:
+        if isinstance(a, dict):
+            return isinstance(b, dict) and list(a) == list(b) and all(same(a[k], b[k]) for k in a)
+        if isinstance(a, list):
+            return isinstance(b, list) and len(a) == len(b) and all(map(same, a, b))
+        if isinstance(a, str):
+            return b == fix(a)
+        return a == b
+
+    return same(old, new)
+
+
+def unsafe_data_fixes(fixes: dict[str, str], root: Path) -> set[str]:
+    """URLs whose replacement would corrupt a YAML file, so they're left unfixed everywhere.
+
+    Dropping them from the Markdown too keeps a generated README in sync with its data.
+    """
+    pattern = build_replacement_pattern(fixes)
+
+    def fix(text: str) -> str:
+        return pattern.sub(lambda m: fixes[m.group(0)], text)
+
+    rejected: set[str] = set()
+    for path in fix_targets(root):
+        if path.suffix in (".yaml", ".yml"):
+            content = path.read_text(encoding="utf-8")
+            new_content = fix(content)
+            if new_content != content and not only_strings_changed(content, new_content, fix):
+                print(f"  not fixing URLs in {path}: the replacement would corrupt the YAML", file=sys.stderr)
+                rejected |= set(pattern.findall(content))
+    return rejected
 
 
 def apply_fixes(
     fixes: dict[str, str],
     root: Path,
 ) -> dict[str, list[tuple[str, str]]]:
+    fixes = {url: new for url, new in fixes.items() if url not in unsafe_data_fixes(fixes, root)}
+    if not fixes:
+        return {}
     pattern = build_replacement_pattern(fixes)
     changes: dict[str, list[tuple[str, str]]] = {}
 
     # Data and config files too: in generated lists the README is rebuilt from
     # them, so a fix applied only to the README would be overwritten.
-    sources = [f for glob in ("data/**/*.yaml", "data/**/*.yml", "awesome-list.yaml") for f in root.glob(glob)]
-    for md_file in sorted(set(root.rglob("*.md")) | set(sources)):
-        parts = md_file.relative_to(root).parts
-        if any(part.startswith(".") for part in parts) or "lychee" in parts:
-            continue
+    for md_file in fix_targets(root):
 
         content = md_file.read_text(encoding="utf-8")
         seen: set[str] = set()
@@ -101,10 +147,6 @@ def apply_fixes(
 
         new_content = pattern.sub(replace, content)
         if new_content != content:
-            if md_file.suffix in (".yaml", ".yml") and not parses_as_yaml(new_content):
-                # e.g. a replacement with an apostrophe inside a single-quoted scalar
-                print(f"  skipped {md_file}: the replacement would break the YAML", file=sys.stderr)
-                continue
             md_file.write_text(new_content, encoding="utf-8")
             changes[str(md_file.relative_to(root))] = file_fixes
 
@@ -211,6 +253,8 @@ def main() -> None:
     print(f"Redirect fixes : {len(redirect_fixes)}")
     print(f"Wayback fixes  : {len(wayback_fixes)}")
 
+    for url in unsafe_data_fixes(all_fixes, root) if all_fixes else ():
+        all_fixes.pop(url)
     unfixable = get_unfixable(report, set(all_fixes.keys()))
 
     if not all_fixes:

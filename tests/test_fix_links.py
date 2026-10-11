@@ -48,16 +48,38 @@ class ApplyFixesSafetyTest(unittest.TestCase):
             changes = apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
             self.assertEqual(list(changes), ["awesome-list.yaml"])
 
-    def test_yaml_that_would_break_is_left_alone(self):
+    def test_yaml_that_would_break_is_left_alone_everywhere(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "data").mkdir()
             data = root / "data" / "tools.yaml"
             original = "- url: 'http://old.example/a'\n"
             data.write_text(original, encoding="utf-8")
+            readme = root / "README.md"
+            readme.write_text("[A](http://old.example/a)\n", encoding="utf-8")
             changes = apply_fixes({"http://old.example/a": "https://new.example/O'Reilly"}, root)
-            self.assertEqual(changes, {})
+            self.assertEqual(changes, {})  # the README is not fixed either, so it matches its data
             self.assertEqual(data.read_text(encoding="utf-8"), original)
+            self.assertEqual(readme.read_text(encoding="utf-8"), "[A](http://old.example/a)\n")
+
+    def test_yaml_that_would_change_shape_is_left_alone(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "data").mkdir()
+            data = root / "data" / "tools.yaml"
+            original = "content: [http://old.example/a]\n"
+            data.write_text(original, encoding="utf-8")
+            self.assertEqual(apply_fixes({"http://old.example/a": "https://new.example/a,b"}, root), {})
+            self.assertEqual(data.read_text(encoding="utf-8"), original)
+
+    def test_url_followed_by_parenthesis_is_not_a_prefix_match(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            readme = root / "README.md"
+            readme.write_text("see http://old.example/a(1) and [A](http://old.example/a)\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual(readme.read_text(encoding="utf-8"),
+                             "see http://old.example/a(1) and [A](https://new.example/a)\n")
 
 
 if __name__ == "__main__":

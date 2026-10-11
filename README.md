@@ -214,6 +214,11 @@ jobs:
       CREATE_PR_TOKEN: ${{ secrets.CREATE_PR_TOKEN }}
 ```
 
+To reverse a decline (an entry PR closed without merging), reopen the issue and
+add `maintainer-pick`, or reopen the entry PR and then the issue. If you pin the workflow
+to a tag or commit instead of `@main`, pass the same value as `infra-ref` so the
+installed tool matches it.
+
 Run it locally, read-only, from the list's checkout:
 `GITHUB_TOKEN=$(gh auth token) awesome-list-triage --all --dry-run`.
 

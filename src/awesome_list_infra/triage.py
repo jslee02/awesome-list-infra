@@ -1035,14 +1035,6 @@ def triage(number: int, dry_run: bool) -> str:
     entry_prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:add-entry/issue-{number}")
     ctx.declined = standing_decline(entry_prs, events, ctx.pick)
     d = decide(s, r, ctx)
-    if d.target:
-        # Another suggestion's open entry PR may already add this resource (its issue was changed
-        # to it, or both were picked): defer to that one rather than open a second PR. If both
-        # already have PRs (runs raced), neither defers; a maintainer picks one.
-        prs = entry_pr_keys()
-        if not keys & prs.get(number, set()) and (other := min((n for n, k in prs.items() if keys & k), default=None)):
-            ctx.pending = other
-            d = decide(s, r, ctx)
     if d.close and (ctx.pending or ctx.other_open):
         # The blocking suggestions may have changed during the lookups (closed, relabeled, or edited
         # to another resource): never close this one in favor of a stale view of them.
@@ -1053,6 +1045,15 @@ def triage(number: int, dry_run: bool) -> str:
                 or not keys & peer_keys([live[ctx.pending]])[ctx.pending]:
             ctx.pending = None
         d = decide(s, r, ctx)
+    if d.target:
+        # Another suggestion's open entry PR may already add this resource (its issue was changed
+        # to it, or both were picked): defer to that one rather than open a second PR. If both
+        # already have PRs (runs raced), neither defers; a maintainer picks one. This reads the PRs
+        # as they are now, so it comes after the issue-based recheck above.
+        prs = entry_pr_keys()
+        if not keys & prs.get(number, set()) and (other := min((n for n, k in prs.items() if keys & k), default=None)):
+            ctx.pending = other
+            d = decide(s, r, ctx)
     url = open_pr(number, s, r, d.target, d.message, events, ctx.pick) if d.target else None
     if url == LISTED:
         ctx.listed = listed_repos()  # the working tree is now at the fresh main

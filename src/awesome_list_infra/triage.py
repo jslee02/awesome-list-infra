@@ -51,7 +51,7 @@ def repo_from_remote(url: str) -> str:
 
 REPO = checkout_repo()
 API = "https://api.github.com"
-DEFAULT_BRANCH = os.environ.get("TRIAGE_DEFAULT_BRANCH", "main")
+DEFAULT_BRANCH = os.environ.get("TRIAGE_DEFAULT_BRANCH") or "main"  # set but empty counts as unset
 WORKFLOW_FILE = os.environ.get("TRIAGE_WORKFLOW", "triage.yml")  # the list's caller workflow
 GENERATOR = os.environ.get("TRIAGE_GENERATOR", "scripts/generate_readme.py")
 VALIDATE_COMMAND = os.environ.get("TRIAGE_VALIDATE_COMMAND", "python3 scripts/validate_entries.py")

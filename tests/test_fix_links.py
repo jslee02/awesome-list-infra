@@ -40,5 +40,25 @@ class ApplyFixesTest(unittest.TestCase):
                              "[A](https://new.example/a) and http://old.example/a.html\n")
 
 
+class ApplyFixesSafetyTest(unittest.TestCase):
+    def test_config_file_is_fixed(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "awesome-list.yaml").write_text("description: see http://old.example/a\n", encoding="utf-8")
+            changes = apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual(list(changes), ["awesome-list.yaml"])
+
+    def test_yaml_that_would_break_is_left_alone(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "data").mkdir()
+            data = root / "data" / "tools.yaml"
+            original = "- url: 'http://old.example/a'\n"
+            data.write_text(original, encoding="utf-8")
+            changes = apply_fixes({"http://old.example/a": "https://new.example/O'Reilly"}, root)
+            self.assertEqual(changes, {})
+            self.assertEqual(data.read_text(encoding="utf-8"), original)
+
+
 if __name__ == "__main__":
     unittest.main()

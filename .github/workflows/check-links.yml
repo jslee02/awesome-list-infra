@@ -107,6 +107,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python -m pip install pyyaml
           PYTHONPATH=.awesome-list-infra/src \
             python -m awesome_list_infra.fix_links lychee/results.json
 
@@ -119,7 +120,6 @@ jobs:
           PYTHONPATH: .awesome-list-infra/src
         run: |
           set -euo pipefail
-          pip install pyyaml
           eval "$GENERATE_COMMAND"
 
       - name: Create pull request with fixes

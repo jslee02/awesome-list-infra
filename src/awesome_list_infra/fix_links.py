@@ -62,6 +62,16 @@ def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:
     return re.compile("(?:" + "|".join(re.escape(url) for url in sorted_urls) + ")" + URL_CONTINUES)
 
 
+def parses_as_yaml(text: str) -> bool:
+    import yaml  # imported here so Markdown-only lists don't need PyYAML
+
+    try:
+        yaml.safe_load(text)
+    except yaml.YAMLError:
+        return False
+    return True
+
+
 def apply_fixes(
     fixes: dict[str, str],
     root: Path,
@@ -69,10 +79,10 @@ def apply_fixes(
     pattern = build_replacement_pattern(fixes)
     changes: dict[str, list[tuple[str, str]]] = {}
 
-    # Data files too: in generated lists the README is rebuilt from data/, so a
-    # fix applied only to the README would be overwritten.
-    data_files = [f for pattern in ("data/**/*.yaml", "data/**/*.yml") for f in root.glob(pattern)]
-    for md_file in sorted(set(root.rglob("*.md")) | set(data_files)):
+    # Data and config files too: in generated lists the README is rebuilt from
+    # them, so a fix applied only to the README would be overwritten.
+    sources = [f for glob in ("data/**/*.yaml", "data/**/*.yml", "awesome-list.yaml") for f in root.glob(glob)]
+    for md_file in sorted(set(root.rglob("*.md")) | set(sources)):
         parts = md_file.relative_to(root).parts
         if any(part.startswith(".") for part in parts) or "lychee" in parts:
             continue
@@ -91,6 +101,10 @@ def apply_fixes(
 
         new_content = pattern.sub(replace, content)
         if new_content != content:
+            if md_file.suffix in (".yaml", ".yml") and not parses_as_yaml(new_content):
+                # e.g. a replacement with an apostrophe inside a single-quoted scalar
+                print(f"  skipped {md_file}: the replacement would break the YAML", file=sys.stderr)
+                continue
             md_file.write_text(new_content, encoding="utf-8")
             changes[str(md_file.relative_to(root))] = file_fixes
 

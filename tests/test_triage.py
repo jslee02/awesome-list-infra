@@ -424,10 +424,11 @@ class LifecycleTest(unittest.TestCase):
     def test_only_a_pick_after_the_decline_overrides_it(self):
         closed = {"number": 200, "state": "closed", "merged_at": None, "closed_at": "2026-06-01T00:00:00Z"}
         pick = lambda when: {"event": "labeled", "label": {"name": "maintainer-pick"}, "created_at": when}
-        self.assertEqual(triage.standing_decline([closed], [pick("2026-05-01T00:00:00Z")]), 200)
-        self.assertIsNone(triage.standing_decline([closed], [pick("2026-07-01T00:00:00Z")]))
+        self.assertEqual(triage.standing_decline([closed], [pick("2026-05-01T00:00:00Z")], True), 200)
+        self.assertIsNone(triage.standing_decline([closed], [pick("2026-07-01T00:00:00Z")], True))
+        self.assertEqual(triage.standing_decline([closed], [pick("2026-07-01T00:00:00Z")], False), 200)  # removed since
         self.assertIsNone(triage.standing_decline([closed, {"number": 201, "state": "open", "merged_at": None,
-                                                            "closed_at": None}], []))
+                                                            "closed_at": None}], [], False))
 
     def test_free_form_body_with_headings(self):
         s = triage.parse_issue("[Suggestion] Tool", "### Project\n\nA planner: https://github.com/o/tool", TODAY)
@@ -465,10 +466,16 @@ class InfraPortTest(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(payload, f)
         env = {"GITHUB_EVENT_NAME": "issues", "GITHUB_EVENT_PATH": f.name}
-        live_closed = {"state": "closed", "labels": [{"name": "monitoring"}, {"name": "suggestion"}]}
+        live_closed = {"state": "closed", "labels": [{"name": "monitoring"}, {"name": "suggestion"}],
+                       "user": {"type": "User"}, "title": "[Suggestion] X", "body": ""}
         with mock.patch.dict(os.environ, env), mock.patch.object(triage, "api", return_value=live_closed) as api:
             self.assertEqual(triage.targets_from_event(dry_run=False), [])
             api.assert_called_with("DELETE", f"/repos/{triage.REPO}/issues/7/labels/monitoring")
+        live_bug = {"state": "closed", "labels": [{"name": "question"}, {"name": "bug"}],
+                    "user": {"type": "User"}, "title": "Broken link", "body": ""}
+        with mock.patch.dict(os.environ, env), mock.patch.object(triage, "api", return_value=live_bug) as api:
+            self.assertEqual(triage.targets_from_event(dry_run=False), [])
+            self.assertEqual(api.call_count, 1)  # not a suggestion: labels untouched
         live_open = {"state": "open", "labels": [{"name": "monitoring"}]}  # reopened before this ran
         with mock.patch.dict(os.environ, env), mock.patch.object(triage, "api", return_value=live_open) as api:
             self.assertEqual(triage.targets_from_event(dry_run=False), [7])
@@ -496,6 +503,10 @@ class QueueStateTest(unittest.TestCase):
             f"/repos/{triage.REPO}/issues/10/events": [{"event": "reopened", "created_at": "2026-06-01T00:00:00Z"}],
         }
         with mock.patch.object(triage, "paged", side_effect=lambda path: history[path]):
+            self.assertEqual([l["name"] for l in triage.normalized(peer)["labels"]], ["suggestion"])
+        closing = {f"/repos/{triage.REPO}/issues/10/comments": [{"user": self.bot, "body": "<!-- triage state=closed -->"}],
+                   f"/repos/{triage.REPO}/issues/10/events": []}
+        with mock.patch.object(triage, "paged", side_effect=lambda path: closing[path]):
             self.assertEqual([l["name"] for l in triage.normalized(peer)["labels"]], ["suggestion"])
         untouched = {"number": 11, "labels": [{"name": "suggestion"}]}
         with mock.patch.object(triage, "paged") as paged:

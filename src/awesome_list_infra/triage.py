@@ -615,15 +615,16 @@ def last_reopen(events: list[dict]) -> str:
     return max((e["created_at"] for e in events if e["event"] == "reopened"), default="")
 
 
-def standing_decline(entry_prs: list[dict], events: list[dict]) -> int | None:
+def standing_decline(entry_prs: list[dict], events: list[dict], pick: bool) -> int | None:
     """The entry PR a maintainer declined (closed unmerged), unless an entry PR is open or merged,
-    or maintainer-pick was applied after the decline. A pick from before still loses to it."""
+    or maintainer-pick is on the issue and was applied after the decline. A pick from before the
+    decline, or one since removed, doesn't override it."""
     if any(pr["state"] == "open" or pr["merged_at"] for pr in entry_prs) or not entry_prs:
         return None
     latest = max(entry_prs, key=lambda pr: pr["closed_at"] or "")
     picks = [e["created_at"] for e in events
              if e["event"] == "labeled" and (e.get("label") or {}).get("name") == "maintainer-pick"]
-    return None if picks and max(picks) > (latest["closed_at"] or "") else latest["number"]
+    return None if pick and picks and max(picks) > (latest["closed_at"] or "") else latest["number"]
 
 
 def reopened_since_triage(comments: list[dict], events: list[dict]) -> bool:
@@ -649,7 +650,9 @@ def normalized(issue: dict) -> dict:
     if not in_triage(names, False):
         return issue
     n = issue["number"]
-    if reopened_since_triage(paged(f"/repos/{REPO}/issues/{n}/comments"), paged(f"/repos/{REPO}/issues/{n}/events")):
+    comments = paged(f"/repos/{REPO}/issues/{n}/comments")
+    # Closed by its own run (labels not yet updated), or reopened since its last triage.
+    if bot_comment(comments)[1] == "closed" or reopened_since_triage(comments, paged(f"/repos/{REPO}/issues/{n}/events")):
         return {**issue, "labels": [{"name": name} for name in sorted(names - ACTIVE_STATES)]}
     return issue
 
@@ -735,7 +738,7 @@ DECLINED = "declined"  # open_pr result when a maintainer declined the entry PR 
 
 
 def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, str | None],
-            decision: str, events: list[dict]) -> str | None:
+            decision: str, events: list[dict], pick: bool) -> str | None:
     """Open the entry PR for an issue, or bring an open one up to date with the suggestion.
 
     An open PR with only bot commits is regenerated in place; one a maintainer has edited is left
@@ -746,7 +749,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
     marker = entry_marker({k: v for k, v in entry.items() if k != "_meta"}, target[0])
     regenerate = None
     prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:{branch}")
-    if standing_decline(prs, events):  # closed by a maintainer after this run read the PR list
+    if standing_decline(prs, events, pick):  # closed by a maintainer after this run read the PR list
         return DECLINED
     if existing := [pr for pr in prs if pr["state"] == "open"]:
         pr = existing[0]
@@ -845,7 +848,7 @@ def triage(number: int, dry_run: bool) -> str:
     entry_prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:add-entry/issue-{number}")
     # Leftover state labels from before a reopen must not give queue priority, in this run or others.
     events = paged(f"/repos/{REPO}/issues/{number}/events")
-    declined = standing_decline(entry_prs, events)
+    declined = standing_decline(entry_prs, events, "maintainer-pick" in labels)
     active = in_triage(labels, reopened_since_triage(comments, events))
     open_issues = [i for i in paged(f"/repos/{REPO}/issues?state=open") if i["number"] != number and is_suggestion(i)]
     others = blocking_suggestions(number, active, [normalized(i) for i in open_issues if i["user"]["login"] == author])
@@ -877,13 +880,14 @@ def triage(number: int, dry_run: bool) -> str:
     summary = f"#{number}: {d.state}" + (f" -> PR in {d.target[0]}" if d.target else "") + f" ({s.repo or 'no repo'})"
     if dry_run:
         return summary
-    url = open_pr(number, s, r, d.target, d.message, events) if d.target else None
+    url = open_pr(number, s, r, d.target, d.message, events, ctx.pick) if d.target else None
     if url == LISTED:
         ctx.listed = with_aliases(listed_repos(), r.full_name)  # the working tree is now at the fresh main
         d = decide(s, r, ctx)
     elif url == DECLINED:
         ctx.declined = standing_decline(
-            api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:add-entry/issue-{number}"), events)
+            api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:add-entry/issue-{number}"),
+            events, ctx.pick)
         d = decide(s, r, ctx)
     elif url:
         d.message += f"\n\nPR: {url}"
@@ -894,11 +898,8 @@ def triage(number: int, dry_run: bool) -> str:
     marker = (f"<!-- triage state={d.state}" + (f" since={ctx.monitoring_since or ctx.today}" if d.state == "monitoring" else "")
               + (f" reopen={reopen}" if (reopen := last_reopen(events)) else "") + " -->")
     text = f"{marker}\n{d.message}"
-    if previous and previous_state == d.state:
-        if previous["body"] != text:
-            api("PATCH", f"/repos/{REPO}/issues/comments/{previous['id']}", {"body": text})
-    else:
-        api("POST", f"/repos/{REPO}/issues/{number}/comments", {"body": text})
+    # Labels first: other runs rank this issue by its labels, so they must not still show an old
+    # state once the marker says the issue was reconciled.
     # Touch only the labels triage manages, so labels a maintainer adds mid-run (maintainer-pick) survive.
     if add := sorted((d.labels | {"suggestion"}) - labels):
         api("POST", f"/repos/{REPO}/issues/{number}/labels", {"labels": add})
@@ -907,6 +908,11 @@ def triage(number: int, dry_run: bool) -> str:
         remove.discard("stale")
     for name in sorted(remove):
         remove_label(number, name)
+    if previous and previous_state == d.state:
+        if previous["body"] != text:
+            api("PATCH", f"/repos/{REPO}/issues/comments/{previous['id']}", {"body": text})
+    else:
+        api("POST", f"/repos/{REPO}/issues/{number}/comments", {"body": text})
     if d.close:
         api("PATCH", f"/repos/{REPO}/issues/{number}", {"state": "closed", "state_reason": "not_planned"})
     return summary
@@ -943,7 +949,7 @@ def targets_from_event(dry_run: bool) -> list[int]:
         live = api("GET", f"/repos/{REPO}/issues/{issue['number']}")  # events can arrive out of order
         if live["state"] == "open":
             return [issue["number"]]  # reopened meanwhile: reconcile it instead
-        if not dry_run:
+        if not dry_run and is_suggestion(live):
             for name in {l["name"] for l in live["labels"]} & ACTIVE_STATES:
                 remove_label(issue["number"], name)
         return []

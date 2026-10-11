@@ -711,6 +711,17 @@ class Round12Test(unittest.TestCase):
         self.assertEqual((d.state, d.target), ("needs-review", None))
         self.assertIn("name", d.message)
 
+    def test_failed_entry_leaves_a_clean_default_branch(self):
+        from unittest import mock
+        s = triage.parse_issue("[Suggestion] FusionCore", NEW_FORM.format(box="X"), TODAY)
+        api = mock.Mock(side_effect=lambda method, path, *a, **k: [])  # no entry PRs yet
+        with mock.patch.object(triage, "api", api), mock.patch.object(triage, "git") as git, \
+                mock.patch.object(triage, "listed_repos", return_value={}), \
+                mock.patch.object(triage, "add_entry"), mock.patch.object(triage, "validate_entries", return_value=False):
+            with self.assertRaises(RuntimeError):  # an ordinary error: a batch moves on to the next issue
+                triage.open_pr(7, s, repo(id=42), ("slam", None), "passes", [], False)
+            self.assertEqual(git.call_args, mock.call("checkout", "--force", "--detach", "origin/main"))
+
     def test_title_commands_are_whole_words(self):
         self.assertEqual(triage.parse_issue("Addison", "", TODAY).name, "Addison")
         self.assertEqual(triage.parse_issue("Add Addison", "", TODAY).name, "Addison")

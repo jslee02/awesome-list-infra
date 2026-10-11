@@ -869,8 +869,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
     entry, flags = build_entry(s, r, target[1])
     marker = entry_marker({k: v for k, v in entry.items() if k != "_meta"}, target[0])
     regenerate = None
-    git("fetch", "origin", DEFAULT_BRANCH)
-    git("checkout", "--force", "--detach", f"origin/{DEFAULT_BRANCH}")  # drops edits left by a failed issue
+    fresh_main()
     listed = listed_repos()
     if listed_as(listed, r) if r else entry_keys(entry) & listed.keys():  # another entry PR merged meanwhile
         return LISTED
@@ -887,18 +886,12 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
             return pr["html_url"]
         regenerate = pr
     git("checkout", "-B", branch, f"origin/{DEFAULT_BRANCH}")
-    add_entry(entry, target[0])
-    if not validate_entries():
-        raise RuntimeError(f"#{number}: generated entry fails schema validation")  # main() moves on
-    git("add", "data", "README.md")
-    git("-c", "user.name=github-actions[bot]", "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com",
-        "commit", "--signoff", "-m", f"content: add {entry['name']}\n\nCloses #{number}")
-    if regenerate:  # only bot commits on it; the lease fails if anyone pushed since
-        git("push", f"--force-with-lease=refs/heads/{branch}:{regenerate['head']['sha']}", "origin", branch)
-    elif reuse := push_new_branch(branch):
-        git("checkout", "--detach", f"origin/{DEFAULT_BRANCH}")
+    try:
+        reuse = commit_and_push(number, entry, target[0], branch, regenerate)
+    finally:  # back on the default branch, clean, even after a failure: later issues read data/ from it
+        git("checkout", "--force", "--detach", f"origin/{DEFAULT_BRANCH}")
+    if reuse:
         return reuse
-    git("checkout", "--detach", f"origin/{DEFAULT_BRANCH}")
     body = "\n".join([
         f"Adds **{entry['name']}** to **{KEY_TO_TITLE[target[0]]}** (`data/{target[0]}.yaml`), from #{number}.",
         "", decision, "",
@@ -928,6 +921,26 @@ def entry_pr_keys() -> dict[int, set[str]]:
         if m and keys and (pr["head"]["repo"] or {}).get("full_name") == REPO:
             result[int(m[1])] = set(keys[1].split())
     return result
+
+
+def commit_and_push(number: int, entry: dict, key: str, branch: str, regenerate: dict | None) -> str | None:
+    """Commit the entry on `branch` and push it. Returns an open PR's URL if one already owns the branch."""
+    add_entry(entry, key)
+    if not validate_entries():
+        raise RuntimeError(f"#{number}: generated entry fails schema validation")  # main() moves on
+    git("add", "data", "README.md")
+    git("-c", "user.name=github-actions[bot]", "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+        "commit", "--signoff", "-m", f"content: add {entry['name']}\n\nCloses #{number}")
+    if regenerate:  # only bot commits on it; the lease fails if anyone pushed since
+        git("push", f"--force-with-lease=refs/heads/{branch}:{regenerate['head']['sha']}", "origin", branch)
+        return None
+    return push_new_branch(branch)
+
+
+def fresh_main() -> None:
+    """Check out the default branch as it is now, discarding local edits (CI only)."""
+    git("fetch", "origin", DEFAULT_BRANCH)
+    git("checkout", "--force", "--detach", f"origin/{DEFAULT_BRANCH}")
 
 
 def push_new_branch(branch: str) -> str | None:
@@ -1010,6 +1023,8 @@ def triage(number: int, dry_run: bool) -> str:
         if keys & peers[i["number"]] and ranks_ahead(peer := normalized(i), number, active):
             if pending is None or ranks_ahead(peer, *pending):
                 pending = (i["number"], in_triage({l["name"] for l in peer["labels"]}, False))
+    if not dry_run:
+        fresh_main()  # the run's checkout may be stale: an entry PR may have merged during the lookups
     ctx = Context(today=date.today(), listed=listed_repos(), pending=pending[0] if pending else None,
                   declined=declined, other_open=others,
                   insider=issue["author_association"] in INSIDERS, pick="maintainer-pick" in labels,

@@ -28,7 +28,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -201,7 +201,9 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
         (m[1] for c in replies if (m := re.search(r"evidence\s*:\s*(.+)", c, re.I | re.S))), "")
     title_name = re.sub(r"^\s*(\[suggestion\]|suggest(ion)?:?|add)\s*", "", title or "", flags=re.I)
     return Suggestion(
-        name=clean_text(fields.get("resource name") or kv.get("name") or title_name.split("—")[0], 60),
+        # Names never need URLs; dropping them keeps URL-form closing references out of commits.
+        name=clean_text(re.sub(r"\S*://\S*", "", fields.get("resource name") or kv.get("name")
+                               or title_name.split("—")[0]), 60),
         repo=(repo_in_field(fields.get("github repository", ""))
               or repo_in_field(kv.get("github", ""))
               or repo_in_text(fields.get("url", "") or kv.get("url", ""))
@@ -354,7 +356,10 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
         return Decision("closed", "Thanks! The repository is archived, so it can't be added as a new entry.", close=True)
 
     table = gate_table(r, ctx.today)
-    if r.outside < MIN_OUTSIDE and not r.outside_complete and not ctx.pick:
+    # An inconclusive outside count goes to a maintainer only if more outside people could
+    # change the outcome; a repository failing the floor on stars, license, or activity can't pass.
+    if r.outside < MIN_OUTSIDE and not r.outside_complete and not ctx.pick \
+            and outcome(replace(r, outside=MIN_OUTSIDE), ctx.today) != "below":
         return Decision("needs-review", f"I couldn't confirm the outside-people gate within the newest issues and "
                         f"PRs, so a maintainer will check it.\n\n{table}", {"needs-review"})
     result = "pass" if ctx.pick else outcome(r, ctx.today)
@@ -726,8 +731,11 @@ def flag_outdated(pr: dict, number: int, key: str, why: str) -> None:
             "before merging, or close it."})
 
 
+DECLINED = "declined"  # open_pr result when a maintainer declined the entry PR meanwhile
+
+
 def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, str | None],
-            decision: str) -> str | None:
+            decision: str, events: list[dict]) -> str | None:
     """Open the entry PR for an issue, or bring an open one up to date with the suggestion.
 
     An open PR with only bot commits is regenerated in place; one a maintainer has edited is left
@@ -737,7 +745,10 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
     entry, flags = build_entry(s, r, target[1])
     marker = entry_marker({k: v for k, v in entry.items() if k != "_meta"}, target[0])
     regenerate = None
-    if existing := api("GET", f"/repos/{REPO}/pulls?state=open&head={REPO.split('/')[0]}:{branch}"):
+    prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:{branch}")
+    if standing_decline(prs, events):  # closed by a maintainer after this run read the PR list
+        return DECLINED
+    if existing := [pr for pr in prs if pr["state"] == "open"]:
         pr = existing[0]
         if marker in (pr["body"] or ""):
             return pr["html_url"]  # still matches the suggestion
@@ -866,10 +877,15 @@ def triage(number: int, dry_run: bool) -> str:
     summary = f"#{number}: {d.state}" + (f" -> PR in {d.target[0]}" if d.target else "") + f" ({s.repo or 'no repo'})"
     if dry_run:
         return summary
-    if d.target and (url := open_pr(number, s, r, d.target, d.message)) == LISTED:
+    url = open_pr(number, s, r, d.target, d.message, events) if d.target else None
+    if url == LISTED:
         ctx.listed = with_aliases(listed_repos(), r.full_name)  # the working tree is now at the fresh main
         d = decide(s, r, ctx)
-    elif d.target and url:
+    elif url == DECLINED:
+        ctx.declined = standing_decline(
+            api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:add-entry/issue-{number}"), events)
+        d = decide(s, r, ctx)
+    elif url:
         d.message += f"\n\nPR: {url}"
     if not d.target:  # e.g. edited to an unknown category or a failing repository
         for pr in (pr for pr in entry_prs if pr["state"] == "open"):
@@ -886,7 +902,10 @@ def triage(number: int, dry_run: bool) -> str:
     # Touch only the labels triage manages, so labels a maintainer adds mid-run (maintainer-pick) survive.
     if add := sorted((d.labels | {"suggestion"}) - labels):
         api("POST", f"/repos/{REPO}/issues/{number}/labels", {"labels": add})
-    for name in sorted((labels & MANAGED_LABELS) - d.labels):
+    remove = (labels & MANAGED_LABELS) - d.labels
+    if previous_state == d.state:  # nothing changed: removing 'stale' would restart its clock
+        remove.discard("stale")
+    for name in sorted(remove):
         remove_label(number, name)
     if d.close:
         api("PATCH", f"/repos/{REPO}/issues/{number}", {"state": "closed", "state_reason": "not_planned"})

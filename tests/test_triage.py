@@ -531,3 +531,16 @@ class QueueStateTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "issues", "GITHUB_EVENT_PATH": f.name}):
             self.assertEqual(triage.targets_from_event(dry_run=True), [7])
         os.unlink(f.name)
+
+
+class Round5Test(unittest.TestCase):
+    def test_names_drop_urls(self):
+        s = triage.parse_issue("x", "### Resource Name\n\nTool fixes https://github.com/o/r/issues/9", TODAY)
+        self.assertEqual(s.name, "Tool fixes")
+
+    def test_inconclusive_count_only_defers_when_it_could_matter(self):
+        attested = triage.parse_issue("[Suggestion] FusionCore", NEW_FORM.format(box="X"), TODAY)
+        d = triage.decide(attested, repo(stars=5, outside=0, outside_complete=False), ctx())
+        self.assertTrue(d.close)  # below the floor on stars whatever the count
+        d = triage.decide(attested, repo(outside=0, outside_complete=False), ctx())
+        self.assertEqual(d.state, "needs-review")

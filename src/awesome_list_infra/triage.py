@@ -483,9 +483,9 @@ def pick_description(submitted: str, about: str) -> tuple[str, bool]:
         # ("... rejection for") from one that ends a clause ("a panel operators look at"). The PR
         # flags it, and a maintainer rewrites it.
         # The longest prefix of up to 99 characters that ends a token: only closing punctuation
-        # (, ; : dashes, quotes, brackets) may come between it and the next space. So "built-in",
-        # "2.0", "1,000", and URLs are never split; a single overlong token is cut hard.
-        m = re.match(r".{1,99}(?=[,;:\-–—\"'’”)\]]*(?:\s|$))", s)
+        # (. , ; : ! ? dashes, quotes, brackets) may come between it and the next space. So
+        # "built-in", "2.0", "1,000", and URLs are never split; a single overlong token is cut hard.
+        m = re.match(r".{1,99}(?=[.,;:!?\-–—\"'’”)\]]*(?:\s|$))", s)
         return ((m[0].rstrip(",;:-–— ") if m else "") or s[:99]) + "…", True
     return (s + ".", True) if s else ("", True)
 

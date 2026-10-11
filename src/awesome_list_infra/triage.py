@@ -870,7 +870,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
     marker = entry_marker({k: v for k, v in entry.items() if k != "_meta"}, target[0])
     regenerate = None
     git("fetch", "origin", DEFAULT_BRANCH)
-    git("checkout", "--detach", f"origin/{DEFAULT_BRANCH}")
+    git("checkout", "--force", "--detach", f"origin/{DEFAULT_BRANCH}")  # drops edits left by a failed issue
     listed = listed_repos()
     if listed_as(listed, r) if r else entry_keys(entry) & listed.keys():  # another entry PR merged meanwhile
         return LISTED
@@ -889,7 +889,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
     git("checkout", "-B", branch, f"origin/{DEFAULT_BRANCH}")
     add_entry(entry, target[0])
     if not validate_entries():
-        raise SystemExit(f"#{number}: generated entry fails schema validation")
+        raise RuntimeError(f"#{number}: generated entry fails schema validation")  # main() moves on
     git("add", "data", "README.md")
     git("-c", "user.name=github-actions[bot]", "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com",
         "commit", "--signoff", "-m", f"content: add {entry['name']}\n\nCloses #{number}")
@@ -1026,9 +1026,13 @@ def triage(number: int, dry_run: bool) -> str:
     if [c["body"] for c in paged(f"/repos/{REPO}/issues/{number}/comments") if c["user"]["login"] == author] != replies:
         return f"#{number}: the author replied while triaging; the queued run for that reply will decide"
     labels = {l["name"] for l in live["labels"]}
-    # A maintainer may have changed maintainer-pick meanwhile, even removing and re-adding it.
-    ctx.pick = "maintainer-pick" in labels
-    events = paged(f"/repos/{REPO}/issues/{number}/events")
+    # A maintainer may have changed maintainer-pick (even removing and re-adding it), reopened a
+    # declined entry PR, or closed and reopened the issue meanwhile.
+    fresh_events = paged(f"/repos/{REPO}/issues/{number}/events")
+    if last_reopen(fresh_events) != last_reopen(events):
+        return f"#{number}: reopened while triaging; the queued run for the reopen will decide"
+    events, ctx.pick = fresh_events, "maintainer-pick" in labels
+    entry_prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:add-entry/issue-{number}")
     ctx.declined = standing_decline(entry_prs, events, ctx.pick)
     d = decide(s, r, ctx)
     if d.target:

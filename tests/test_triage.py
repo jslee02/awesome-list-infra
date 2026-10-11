@@ -437,3 +437,28 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(triage.entry_marker(entry, "slam"), same)
         self.assertNotEqual(triage.entry_marker(entry, "control"), same)
         self.assertNotEqual(triage.entry_marker({**entry, "description": "Does b."}, "slam"), same)
+
+
+class InfraPortTest(unittest.TestCase):
+    def test_amended_bot_commit_is_not_bot_only(self):
+        bot = {"login": "github-actions[bot]"}
+        self.assertTrue(triage.bot_only([{"author": bot, "committer": bot}]))
+        self.assertFalse(triage.bot_only([{"author": bot, "committer": {"login": "maintainer"}}]))
+
+    def test_repo_from_remote(self):
+        self.assertEqual(triage.repo_from_remote("git@github.com:jslee02/awesome-gpgpu.git\n"), "jslee02/awesome-gpgpu")
+        self.assertEqual(triage.repo_from_remote("https://github.com/o/r"), "o/r")
+        self.assertEqual(triage.repo_from_remote(""), "")
+
+    def test_closing_a_suggestion_strips_state_labels(self):
+        import os
+        import tempfile
+        from unittest import mock
+        payload = {"action": "closed", "issue": {"number": 7, "labels": [{"name": "monitoring"}, {"name": "suggestion"}]}}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(payload, f)
+        env = {"GITHUB_EVENT_NAME": "issues", "GITHUB_EVENT_PATH": f.name}
+        with mock.patch.dict(os.environ, env), mock.patch.object(triage, "api") as api:
+            self.assertEqual(triage.targets_from_event(dry_run=False), [])
+            api.assert_called_once_with("DELETE", f"/repos/{triage.REPO}/issues/7/labels/monitoring")
+        os.unlink(f.name)

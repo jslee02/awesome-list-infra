@@ -179,7 +179,7 @@ name: Triage Suggestions
 
 on:
   issues:
-    types: [opened, edited, reopened, labeled]
+    types: [opened, edited, reopened, labeled, closed]
   issue_comment:
     types: [created]
   pull_request_target:

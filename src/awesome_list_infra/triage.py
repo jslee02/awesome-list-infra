@@ -36,7 +36,20 @@ import yaml
 
 ROOT = Path.cwd()  # the list repository's checkout
 DATA = ROOT / "data"
-REPO = os.environ.get("GITHUB_REPOSITORY", "jslee02/awesome-robotics-libraries")
+def checkout_repo() -> str:
+    """owner/repo of the checkout: GITHUB_REPOSITORY in CI, else the origin remote."""
+    if repo := os.environ.get("GITHUB_REPOSITORY"):
+        return repo
+    return repo_from_remote(subprocess.run(["git", "remote", "get-url", "origin"], cwd=ROOT,
+                                           capture_output=True, text=True).stdout)
+
+
+def repo_from_remote(url: str) -> str:
+    m = re.search(r"github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?\s*$", url)
+    return m[1] if m else ""
+
+
+REPO = checkout_repo()
 API = "https://api.github.com"
 DEFAULT_BRANCH = os.environ.get("TRIAGE_DEFAULT_BRANCH", "main")
 WORKFLOW_FILE = os.environ.get("TRIAGE_WORKFLOW", "triage.yml")  # the list's caller workflow
@@ -639,6 +652,21 @@ def entry_marker(entry: dict, key: str) -> str:
 BOT_LOGIN = "github-actions[bot]"
 
 
+def bot_only(commits: list[dict]) -> bool:
+    """Whether the bot both authored and committed every commit. An amended commit keeps the bot
+    as author but records the maintainer as committer."""
+    return all((c.get(role) or {}).get("login") == BOT_LOGIN for c in commits for role in ("author", "committer"))
+
+
+def flag_outdated(pr: dict, number: int, key: str, why: str) -> None:
+    """Note once on an entry PR that its suggestion changed since it was opened."""
+    note = f"<!-- outdated {key} -->"
+    if not any(note in c["body"] for c in paged(f"/repos/{REPO}/issues/{pr['number']}/comments")):
+        api("POST", f"/repos/{REPO}/issues/{pr['number']}/comments", {"body": f"{note}\n"
+            f"#{number} changed after this PR was opened, and {why}. Please compare it with the issue "
+            "before merging, or close it."})
+
+
 def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, str | None],
             decision: str) -> str | None:
     """Open the entry PR for an issue, or bring an open one up to date with the suggestion.
@@ -655,12 +683,8 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
         if marker in (pr["body"] or ""):
             return pr["html_url"]  # still matches the suggestion
         commits = api("GET", f"/repos/{REPO}/pulls/{pr['number']}/commits")
-        if any((c.get("author") or {}).get("login") != BOT_LOGIN for c in commits):
-            note = f"<!-- outdated {marker} -->"
-            if not any(note in c["body"] for c in paged(f"/repos/{REPO}/issues/{pr['number']}/comments")):
-                api("POST", f"/repos/{REPO}/issues/{pr['number']}/comments", {"body": f"{note}\n"
-                    f"#{number} changed after this PR was opened, and this PR has maintainer edits, so it was "
-                    "not regenerated. Please compare it with the issue before merging."})
+        if not bot_only(commits):
+            flag_outdated(pr, number, marker, "this PR has maintainer edits, so it was not regenerated")
             return pr["html_url"]
         regenerate = pr
     git("fetch", "origin", DEFAULT_BRANCH)
@@ -788,6 +812,10 @@ def triage(number: int, dry_run: bool) -> str:
         d = decide(s, r, ctx)
     elif d.target and url:
         d.message += f"\n\nPR: {url}"
+    if not d.target:  # e.g. edited to an unknown category or a failing repository
+        for pr in (pr for pr in entry_prs if pr["state"] == "open"):
+            flag_outdated(pr, number, f"{d.state}:{hashlib.sha256(d.message.encode()).hexdigest()[:12]}",
+                          f"it is now '{d.state}' without an entry")
     marker = f"<!-- triage state={d.state}" + (f" since={ctx.monitoring_since or ctx.today}" if d.state == "monitoring" else "") + " -->"
     text = f"{marker}\n{d.message}"
     if previous and previous_state == d.state:
@@ -832,6 +860,11 @@ def targets_from_event(dry_run: bool) -> list[int]:
         print("\n".join(dispatch_each(open_suggestions(), dry_run)))
         return []
     issue = payload.get("issue") or {}
+    if event == "issues" and payload.get("action") == "closed":
+        if not dry_run:
+            for name in {l["name"] for l in issue.get("labels", [])} & ACTIVE_STATES:
+                remove_label(issue["number"], name)
+        return []
     if event == "issues" and (payload.get("action") in ("opened", "edited", "reopened")
                               or payload.get("label", {}).get("name") == "maintainer-pick"):
         return [issue["number"]]

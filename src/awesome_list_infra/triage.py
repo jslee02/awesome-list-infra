@@ -482,7 +482,11 @@ def pick_description(submitted: str, about: str) -> tuple[str, bool]:
         # Mark the cut rather than guess which words could go: no word list tells a dangling "for"
         # ("... rejection for") from one that ends a clause ("a panel operators look at"). The PR
         # flags it, and a maintainer rewrites it.
-        return s[:100].rsplit(" ", 1)[0].rstrip(",;:-–— ") + "…", True  # whole words, 99 characters at most
+        # The longest prefix of up to 99 characters that ends before a space, comma, semicolon, or
+        # colon, so only whole words: "built-in", "2.0", or "e.g." is never split. A single overlong
+        # token is cut hard.
+        m = re.match(r".{1,99}(?=[\s,;:])", s)
+        return ((m[0].rstrip(",;:-–— ") if m else "") or s[:99]) + "…", True
     return (s + ".", True) if s else ("", True)
 
 

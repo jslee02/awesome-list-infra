@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -264,9 +265,45 @@ def set_output(name: str, value: str) -> None:
     print(f"  ::output:: {name}={value}")
 
 
+OUTPUT_EXCLUDES = [":(exclude)lychee", ":(exclude).awesome-list-infra"]
+
+
+def reverted_fixes(applied: dict[str, str], root: Path) -> list[str]:
+    """Fixed URLs that are back in Markdown, e.g. because a README generator emits them itself."""
+    markdown = [read_text(f) for f in fix_targets(root) if f.suffix == ".md"]
+    return sorted(old for old in applied
+                  if any(build_replacement_pattern({old: ""}).search(text) for text in markdown))
+
+
+def verify_after_regeneration(applied_path: Path, root: Path, out_dir: Path) -> None:
+    """Report fixes the README generator undid, and whether any fix is left for a PR."""
+    applied = json.loads(applied_path.read_text(encoding="utf-8"))
+    reverted = reverted_fixes(applied, root)
+    if reverted:
+        report = out_dir / "unfixed-links.md"
+        lines = [
+            "### Restored by the README generator\n",
+            "These links come from the generator itself, so fix them there:\n",
+            *(f"- [ ] {old} -> {applied[old]}" for old in reverted),
+            "",
+        ]
+        with open(report, "a", encoding="utf-8") as f:
+            if report.stat().st_size if report.exists() else 0:
+                f.write("\n")
+            f.write("\n".join(lines))
+    # Ignore this job's own outputs: the lychee/ reports and the infra checkout.
+    changed = subprocess.run(["git", "status", "--porcelain", "--", ".", *OUTPUT_EXCLUDES], cwd=root,
+                             capture_output=True, text=True, check=True).stdout.strip()
+    set_output("fixes_applied", "true" if changed else "false")
+    set_output("has_unfixable", "true" if reverted else "false")
+
+
 def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--verify":
+        verify_after_regeneration(Path(sys.argv[2]), Path("."), Path("lychee"))
+        return
     if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <lychee-report.json>", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <lychee-report.json> | --verify <applied-fixes.json>", file=sys.stderr)
         sys.exit(1)
 
     report = load_report(sys.argv[1])
@@ -302,6 +339,8 @@ def main() -> None:
         return
 
     changes = apply_fixes(all_fixes, root)
+    applied = {old: new for fixes in changes.values() for old, new in fixes}
+    (out_dir / "applied-fixes.json").write_text(json.dumps(applied, indent=2), encoding="utf-8")
     print(f"Files modified  : {len(changes)}")
     for filepath, fixes in sorted(changes.items()):
         for old, new in fixes:

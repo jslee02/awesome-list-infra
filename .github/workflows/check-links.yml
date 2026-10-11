@@ -113,6 +113,7 @@ jobs:
 
       - name: Regenerate README from fixed data
         if: steps.fix.outputs.fixes_applied == 'true' && inputs.generate-command != ''
+        id: regen
         shell: bash
         env:
           GENERATE_COMMAND: ${{ inputs.generate-command }}
@@ -121,12 +122,19 @@ jobs:
         run: |
           set -euo pipefail
           eval "$GENERATE_COMMAND"
+          # Report fixes the generator undid (links it emits itself) and drop an empty PR.
+          python -m awesome_list_infra.fix_links --verify lychee/applied-fixes.json
 
       - name: Create pull request with fixes
-        if: steps.fix.outputs.fixes_applied == 'true'
+        if: steps.fix.outputs.fixes_applied == 'true' && steps.regen.outputs.fixes_applied != 'false'
         uses: peter-evans/create-pull-request@v8
         with:
           commit-message: "fix: replace broken links with updated URLs"
+          # Not the job's own lychee/ reports or the infra checkout.
+          add-paths: |
+            .
+            :(exclude)lychee
+            :(exclude).awesome-list-infra
           title: "fix: auto-fix broken links"
           body-path: lychee/fix-summary.md
           branch: ${{ inputs.fix-branch }}
@@ -134,7 +142,7 @@ jobs:
           labels: maintenance
 
       - name: Create issue for unfixable links
-        if: steps.fix.outputs.has_unfixable == 'true'
+        if: steps.fix.outputs.has_unfixable == 'true' || steps.regen.outputs.has_unfixable == 'true'
         uses: peter-evans/create-issue-from-file@v6
         with:
           title: "Link Checker: broken links requiring manual fix"

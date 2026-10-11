@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from awesome_list_infra.fix_links import apply_fixes
+from awesome_list_infra.fix_links import apply_fixes, reverted_fixes
 
 
 class ApplyFixesTest(unittest.TestCase):
@@ -127,6 +127,15 @@ class ApplyFixesRobustnessTest(unittest.TestCase):
             data.write_bytes(b"- name: A\r\n  url: http://old.example/a\r\n")
             apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
             self.assertEqual(data.read_bytes(), b"- name: A\r\n  url: https://new.example/a\r\n")
+
+
+class RegenerationTest(unittest.TestCase):
+    def test_fixes_undone_by_the_generator_are_found(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "README.md").write_text("[CC0](http://old.example/cc0) [A](https://new.example/a)\n", encoding="utf-8")
+            applied = {"http://old.example/cc0": "https://new.example/cc0", "http://old.example/a": "https://new.example/a"}
+            self.assertEqual(reverted_fixes(applied, root), ["http://old.example/cc0"])
 
 
 if __name__ == "__main__":

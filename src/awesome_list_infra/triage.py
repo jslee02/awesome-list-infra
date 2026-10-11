@@ -103,7 +103,7 @@ def generator_sections(path: Path):
 # The host must be github.com itself, not gist.github.com or notgithub.com.
 # The link must start a token (after whitespace, "(", "<", "[", or a quote), so github.com inside
 # another URL's path (https://docs.example/github.com/o/r) or a look-alike host doesn't count.
-GITHUB_URL = re.compile(r"""(?<![^\s(<\["'`])(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)""")
+GITHUB_URL = re.compile(r"""(?<![^\s(<\["'`])(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)""", re.I)
 SLUG = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$")
 NOT_OWNERS = {"orgs", "sponsors", "settings", "features", "topics", "apps", "marketplace", "user-attachments"}
 KEY_VALUE = re.compile(r"^[\s*-]*\**(name|url|github|category|description|affiliation)\**\s*:\**\s*(.+?)\s*$", re.I | re.M)
@@ -145,7 +145,7 @@ def form_fields(body: str) -> dict[str, str]:
 
 def first_link(text: str) -> str:
     """The first http(s) link, without surrounding Markdown delimiters or trailing punctuation."""
-    m = re.search(r"""https?://[^\s)>\]"'`]+""", text or "")
+    m = re.search(r"""https?://[^\s)>\]"'`]+""", text or "", re.I)
     return m[0].rstrip(".,;:") if m else ""
 
 
@@ -191,7 +191,7 @@ def clean_text(text: str, limit: int) -> str:
 
 
 # Characters safe inside a Markdown link destination; excludes ( ) < > [ ] quotes and spaces.
-SAFE_URL = re.compile(r"https?://[A-Za-z0-9.-]+(:\d+)?([/?#][A-Za-z0-9._~%!$&*+,;=:@/?#-]*)?")
+SAFE_URL = re.compile(r"https?://[A-Za-z0-9.-]+(:\d+)?([/?#][A-Za-z0-9._~%!$&*+,;=:@/?#-]*)?", re.I)
 
 
 def safe_url(url: str) -> str:
@@ -428,7 +428,7 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
     age_note = f" By age alone it qualifies on {when}." if when else ""
     if result == "monitor":
         since = ctx.monitoring_since or ctx.today
-        if (ctx.today - since).days > MONITOR_DAYS:
+        if (ctx.today - since).days >= MONITOR_DAYS:
             return Decision("closed", f"Monitored since {since} without reaching the {bar}. Closing for now; "
                             f"you're welcome to resubmit once it passes.\n\n{table}", close=True)
         return Decision("monitoring", f"Not yet over the {bar}, but close enough to watch. I re-check monthly "
@@ -526,10 +526,10 @@ def entry_keys(e: dict) -> set[str]:
 
 
 def url_key(url: str) -> str:
-    """A URL as an entry key: the host lowercased, as hosts are case-insensitive; the rest as given."""
+    """A URL as an entry key: host and port lowercased, as hosts are case-insensitive; the rest as given."""
     p = urllib.parse.urlsplit(url)
     rest = p.path.rstrip("/") + (f"?{p.query}" if p.query else "") + (f"#{p.fragment}" if p.fragment else "")
-    return f"url:{(p.hostname or '').removeprefix('www.')}{rest}"
+    return f"url:{p.netloc.lower().removeprefix('www.')}{rest}"
 
 
 def listed_repos() -> dict[str, str]:
@@ -642,19 +642,29 @@ def repo_ids(slugs) -> dict[str, int | None]:
     return ids
 
 
-def effective_repo_ids(issues: list[dict]) -> dict[int, int | None]:
-    """Issue number -> ID of the repository that suggestion's own triage evaluates: the body's if
-    it exists, else the newest existing one named in its author's replies."""
+def suggestion_keys(s: Suggestion, repo_id: int | None) -> set[str]:
+    """What a suggestion is about, as `entry_keys`: its repository's ID; for a resource not on
+    GitHub, its source and website; nothing if its repository doesn't exist."""
+    if repo_id:
+        return {f"id:{repo_id}"}
+    return entry_keys(build_entry(s, None, None)[0]) if s.repo is None else set()
+
+
+def peer_keys(issues: list[dict]) -> dict[int, set[str]]:
+    """Issue number -> `suggestion_keys` as that suggestion's own triage sees it: the body's
+    repository if it exists, else the newest existing one in its author's replies, else (with no
+    repository named at all) the resource's source and website."""
     parsed = {i["number"]: parse_issue(i["title"], i.get("body") or "", POLICY_START) for i in issues}
     ids = repo_ids(s.repo for s in parsed.values() if s.repo)
     result = {}
     for i in issues:
-        result[i["number"]] = ids.get(parsed[i["number"]].repo)
-        if result[i["number"]] is None:  # missing or gone in the body
+        s, repo_id = parsed[i["number"]], ids.get(parsed[i["number"]].repo)
+        if repo_id is None:  # missing or gone in the body
             replies = [c["body"] for c in paged(f"/repos/{REPO}/issues/{i['number']}/comments")
                        if c["user"]["login"] == i["user"]["login"]]
-            reply_repos = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies).reply_repos
-            result[i["number"]] = next(filter(None, repo_ids(reply_repos).values()), None)  # newest first
+            s = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies)
+            repo_id = next(filter(None, repo_ids(s.reply_repos).values()), None)  # newest first
+        result[i["number"]] = suggestion_keys(s, repo_id)
     return result
 
 
@@ -965,12 +975,13 @@ def triage(number: int, dry_run: bool) -> str:
         if r := fetch_repo(reply_repo):
             s.repo = reply_repo
             break
-    # The open suggestion of the same repository first in the queue, so two entry PRs never race
+    # The open suggestion of the same resource first in the queue, so two entry PRs never race
     # to merge; the others close as its duplicates. One batched lookup per run keeps sweeps linear.
     pending = None
-    peer_ids = effective_repo_ids(open_issues) if r else {}
-    for i in open_issues if r else []:
-        if peer_ids[i["number"]] == r.id and ranks_ahead(peer := normalized(i), number, active):
+    keys = suggestion_keys(s, r.id if r else None)
+    peers = peer_keys(open_issues) if keys else {}
+    for i in open_issues if keys else []:
+        if keys & peers[i["number"]] and ranks_ahead(peer := normalized(i), number, active):
             if pending is None or ranks_ahead(peer, *pending):
                 pending = (i["number"], in_triage({l["name"] for l in peer["labels"]}, False))
     ctx = Context(today=date.today(), listed=listed_repos(), pending=pending[0] if pending else None,
@@ -1000,7 +1011,7 @@ def triage(number: int, dry_run: bool) -> str:
         # Another suggestion's open entry PR may already add this resource (its issue was changed
         # to it, or both were picked): defer to that one rather than open a second PR. If both
         # already have PRs (runs raced), neither defers; a maintainer picks one.
-        keys, prs = entry_keys(build_entry(s, r, None)[0]), entry_pr_keys()
+        prs = entry_pr_keys()
         if not keys & prs.get(number, set()) and (other := min((n for n, k in prs.items() if keys & k), default=None)):
             ctx.pending = other
             d = decide(s, r, ctx)

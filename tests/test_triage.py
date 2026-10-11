@@ -221,6 +221,8 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(triage.decide(self.attested, young, ctx()).state, "monitoring")
         old = ctx(monitoring_since=date(2025, 10, 1))
         self.assertTrue(triage.decide(self.attested, young, old).close)
+        on_the_end_date = ctx(monitoring_since=TODAY - triage.timedelta(days=triage.MONITOR_DAYS))
+        self.assertTrue(triage.decide(self.attested, young, on_the_end_date).close)
 
     def test_below_floor_closes(self):
         d = triage.decide(self.attested, repo(stars=3, outside=0), ctx())
@@ -639,11 +641,16 @@ class Round12Test(unittest.TestCase):
         known = {"a/current": 1, "b/new": 2}
         with mock.patch.object(triage, "paged", return_value=replies), \
                 mock.patch.object(triage, "repo_ids", side_effect=lambda slugs: {x: known.get(x) for x in slugs}):
-            self.assertEqual(triage.effective_repo_ids([peer]), {10: 2})  # the newest reply wins
+            self.assertEqual(triage.peer_keys([peer]), {10: {"id:2"}})  # the newest reply wins
             del known["b/new"]
-            self.assertEqual(triage.effective_repo_ids([peer]), {10: 1})  # unless it doesn't exist
+            self.assertEqual(triage.peer_keys([peer]), {10: {"id:1"}})  # unless it doesn't exist
             in_body = {**peer, "body": "https://github.com/a/current"}
-            self.assertEqual(triage.effective_repo_ids([in_body]), {10: 1})
+            self.assertEqual(triage.peer_keys([in_body]), {10: {"id:1"}})
+            del known["a/current"]  # named repositories that don't exist identify nothing
+            self.assertEqual(triage.peer_keys([in_body]), {10: set()})
+        website = {**peer, "body": "### Resource Name\n\nTool\n\n### URL\n\nhttps://Tool.example:8443/Docs/"}
+        with mock.patch.object(triage, "paged", return_value=[]), mock.patch.object(triage, "repo_ids", return_value={}):
+            self.assertEqual(triage.peer_keys([website]), {10: {"url:tool.example:8443/Docs"}})  # not on GitHub
 
     def test_website_is_never_github(self):
         s = triage.parse_issue("[Suggestion] x", NEW_FORM.format(box="X").replace(
@@ -667,9 +674,15 @@ class Round12Test(unittest.TestCase):
             d = triage.decide(s, None, ctx(listed=listed, pick=pick))
             self.assertEqual((d.state, d.labels), ("closed", {"duplicate"}))
 
+    def test_github_links_in_any_case(self):
+        self.assertEqual(triage.repo_in_field("HTTPS://GitHub.com/o/r"), "o/r")
+        self.assertEqual(triage.safe_url("HTTPS://Example.com/a"), "HTTPS://Example.com/a")
+        self.assertTrue(triage.on_github("HTTPS://WWW.GitHub.com/o/r"))
+
     def test_url_keys_keep_case_beyond_the_host(self):
         self.assertEqual(triage.url_key("https://WWW.Host.Example/Tool/?q=A#x"), "url:host.example/Tool?q=A#x")
         self.assertNotEqual(triage.url_key("https://host.example/Tool"), triage.url_key("https://host.example/tool"))
+        self.assertNotEqual(triage.url_key("https://host.example/t"), triage.url_key("https://host.example:8443/t"))
 
     def test_open_entry_prs_by_what_they_add(self):
         from unittest import mock

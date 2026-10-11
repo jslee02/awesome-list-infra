@@ -303,7 +303,7 @@ BAR = "[acceptance bar](https://github.com/{repo}/blob/main/CONTRIBUTING.md#acce
 
 def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
     bar = BAR.format(repo=REPO)
-    if ctx.declined and not ctx.pick:  # reopening or editing doesn't undo a maintainer's decision
+    if ctx.declined:  # reopening or editing doesn't undo a maintainer's decision (see standing_decline)
         return Decision("closed", f"A maintainer declined this in #{ctx.declined}; see the reason there. If "
                         "something has changed, ask a maintainer to take another look.", close=True)
     if ctx.other_open and not ctx.insider and not ctx.pick:
@@ -610,6 +610,17 @@ def last_reopen(events: list[dict]) -> str:
     return max((e["created_at"] for e in events if e["event"] == "reopened"), default="")
 
 
+def standing_decline(entry_prs: list[dict], events: list[dict]) -> int | None:
+    """The entry PR a maintainer declined (closed unmerged), unless an entry PR is open or merged,
+    or maintainer-pick was applied after the decline. A pick from before still loses to it."""
+    if any(pr["state"] == "open" or pr["merged_at"] for pr in entry_prs) or not entry_prs:
+        return None
+    latest = max(entry_prs, key=lambda pr: pr["closed_at"] or "")
+    picks = [e["created_at"] for e in events
+             if e["event"] == "labeled" and (e.get("label") or {}).get("name") == "maintainer-pick"]
+    return None if picks and max(picks) > (latest["closed_at"] or "") else latest["number"]
+
+
 def reopened_since_triage(comments: list[dict], events: list[dict]) -> bool:
     """Whether the issue was reopened after the bot last triaged it.
 
@@ -821,10 +832,9 @@ def triage(number: int, dry_run: bool) -> str:
     # Lifecycle facts come from durable state, not the triggering event: GitHub replaces a
     # pending run when a newer one for the same issue is queued, so event details can be lost.
     entry_prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:add-entry/issue-{number}")
-    declined = None if any(pr["state"] == "open" or pr["merged_at"] for pr in entry_prs) \
-        else next((pr["number"] for pr in entry_prs), None)
     # Leftover state labels from before a reopen must not give queue priority, in this run or others.
     events = paged(f"/repos/{REPO}/issues/{number}/events")
+    declined = standing_decline(entry_prs, events)
     active = in_triage(labels, reopened_since_triage(comments, events))
     open_issues = [i for i in paged(f"/repos/{REPO}/issues?state=open") if i["number"] != number and is_suggestion(i)]
     others = blocking_suggestions(number, active, [normalized(i) for i in open_issues if i["user"]["login"] == author])
@@ -857,7 +867,7 @@ def triage(number: int, dry_run: bool) -> str:
     if dry_run:
         return summary
     if d.target and (url := open_pr(number, s, r, d.target, d.message)) == LISTED:
-        ctx.listed = listed_repos()  # the working tree is now at the fresh main
+        ctx.listed = with_aliases(listed_repos(), r.full_name)  # the working tree is now at the fresh main
         d = decide(s, r, ctx)
     elif d.target and url:
         d.message += f"\n\nPR: {url}"
@@ -911,8 +921,11 @@ def targets_from_event(dry_run: bool) -> list[int]:
         return []
     issue = payload.get("issue") or {}
     if event == "issues" and payload.get("action") == "closed":
+        live = api("GET", f"/repos/{REPO}/issues/{issue['number']}")  # events can arrive out of order
+        if live["state"] == "open":
+            return [issue["number"]]  # reopened meanwhile: reconcile it instead
         if not dry_run:
-            for name in {l["name"] for l in issue.get("labels", [])} & ACTIVE_STATES:
+            for name in {l["name"] for l in live["labels"]} & ACTIVE_STATES:
                 remove_label(issue["number"], name)
         return []
     # Any other issue event (opened, edited, reopened, labeled) re-triages: GitHub may have

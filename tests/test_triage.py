@@ -416,11 +416,18 @@ class QueueAndTextTest(unittest.TestCase):
 class LifecycleTest(unittest.TestCase):
     attested = triage.parse_issue("[Suggestion] FusionCore", NEW_FORM.format(box="X"), TODAY)
 
-    def test_decline_wins_unless_a_maintainer_picks(self):
-        d = triage.decide(self.attested, repo(), ctx(declined=200))
+    def test_a_standing_decline_closes_the_suggestion(self):
+        d = triage.decide(self.attested, repo(), ctx(declined=200, pick=True))  # an older pick loses
         self.assertEqual((d.state, d.close), ("closed", True))
         self.assertIn("#200", d.message)
-        self.assertEqual(triage.decide(self.attested, repo(), ctx(declined=200, pick=True)).state, "needs-review")
+
+    def test_only_a_pick_after_the_decline_overrides_it(self):
+        closed = {"number": 200, "state": "closed", "merged_at": None, "closed_at": "2026-06-01T00:00:00Z"}
+        pick = lambda when: {"event": "labeled", "label": {"name": "maintainer-pick"}, "created_at": when}
+        self.assertEqual(triage.standing_decline([closed], [pick("2026-05-01T00:00:00Z")]), 200)
+        self.assertIsNone(triage.standing_decline([closed], [pick("2026-07-01T00:00:00Z")]))
+        self.assertIsNone(triage.standing_decline([closed, {"number": 201, "state": "open", "merged_at": None,
+                                                            "closed_at": None}], []))
 
     def test_free_form_body_with_headings(self):
         s = triage.parse_issue("[Suggestion] Tool", "### Project\n\nA planner: https://github.com/o/tool", TODAY)
@@ -454,13 +461,18 @@ class InfraPortTest(unittest.TestCase):
         import os
         import tempfile
         from unittest import mock
-        payload = {"action": "closed", "issue": {"number": 7, "labels": [{"name": "monitoring"}, {"name": "suggestion"}]}}
+        payload = {"action": "closed", "issue": {"number": 7, "labels": [{"name": "monitoring"}]}}
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(payload, f)
         env = {"GITHUB_EVENT_NAME": "issues", "GITHUB_EVENT_PATH": f.name}
-        with mock.patch.dict(os.environ, env), mock.patch.object(triage, "api") as api:
+        live_closed = {"state": "closed", "labels": [{"name": "monitoring"}, {"name": "suggestion"}]}
+        with mock.patch.dict(os.environ, env), mock.patch.object(triage, "api", return_value=live_closed) as api:
             self.assertEqual(triage.targets_from_event(dry_run=False), [])
-            api.assert_called_once_with("DELETE", f"/repos/{triage.REPO}/issues/7/labels/monitoring")
+            api.assert_called_with("DELETE", f"/repos/{triage.REPO}/issues/7/labels/monitoring")
+        live_open = {"state": "open", "labels": [{"name": "monitoring"}]}  # reopened before this ran
+        with mock.patch.dict(os.environ, env), mock.patch.object(triage, "api", return_value=live_open) as api:
+            self.assertEqual(triage.targets_from_event(dry_run=False), [7])
+            self.assertEqual(api.call_count, 1)  # only the read
         os.unlink(f.name)
 
 

@@ -1,0 +1,6 @@
+{
+ "number": 105,
+ "title": "[Suggestion] ProtoTwin",
+ "created_at": "2026-05-15",
+ "body": "### Resource Name\n\nProtoTwin\n\n### URL\n\nhttps://prototwin.com\n\n### GitHub Repository\n\n_No response_\n\n### Alternative Repository\n\n_No response_\n\n### Category\n\nSimulators\n\n### Description\n\nBrowser-based simulation platform for industrial automation and robotics.\n\n### Why should it be included?\n\nUsed by over 2000 companies and universities, including some well known publicly traded robotics companies and machine builders. Connects to PLCs for virtual commissioning. Supports reinforcement learning, with a very simple workflow. Commercial, but free for education.\n\n### Must-have checklist (all required)\n\n- [x] Relevant to robotics (simulation, planning, perception, control, dynamics, etc.)\n- [x] Publicly accessible (open source, or well-documented commercial tool)\n- [x] Not a duplicate of an existing entry\n- [x] Has a meaningful description\n\n### Scoring checklist (need ≥ 3 of 5)\n\n- [x] **Popularity**: ≥ 50 GitHub stars (or equivalent community adoption for non-GitHub projects)\n- [x] **Activity**: At least one commit within the last 2 years\n- [x] **Documentation**: Has a README with usage examples or API docs\n- [x] **Maturity**: Project is ≥ 6 months old\n- [x] **Uniqueness**: Fills a niche not already covered by existing entries"
+}

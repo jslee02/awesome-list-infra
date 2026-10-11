@@ -378,8 +378,8 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
                             + "\n".join(f"- {a}" for a in asks), {"question"})
     target = category_target(s.category)
     if s.repo is None:
-        if s.alt_repo or s.url:
-            same = entry_keys(build_entry(s, None, None)[0])
+        # Judge the links the entry would actually get: unsafe ones are dropped.
+        if same := entry_keys(build_entry(s, None, None)[0]):
             if listed := next((ctx.listed[k] for k in same if k in ctx.listed), None):
                 return already_listed(listed)
             if ctx.pending:
@@ -393,6 +393,10 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
                                 "citations, or third-party tutorials.", {"question"})
             return Decision("needs-review", "This resource is not on GitHub, so a maintainer will review it by hand.",
                             {"needs-review"})
+        if s.alt_repo or s.url:
+            return Decision("question", "I couldn't use the link given. Please put a plain `https://` URL, without "
+                            "spaces, quotes, or parentheses, in the **URL** or **Alternative Repository** field "
+                            "(edit the issue), or reply with it.", {"question"})
         return Decision("question", "I couldn't find a GitHub repository. Please add `owner/repo` to the "
                         "**GitHub Repository** field, or reply with it. For a project not on GitHub, add its "
                         "source or website instead.", {"question"})
@@ -529,7 +533,8 @@ def url_key(url: str) -> str:
     """A URL as an entry key: host and port lowercased, as hosts are case-insensitive; the rest as given."""
     p = urllib.parse.urlsplit(url)
     rest = p.path.rstrip("/") + (f"?{p.query}" if p.query else "") + (f"#{p.fragment}" if p.fragment else "")
-    return f"url:{p.netloc.lower().removeprefix('www.')}{rest}"
+    default_port = {"http": ":80", "https": ":443"}.get(p.scheme.lower(), "")
+    return f"url:{p.netloc.lower().removeprefix('www.').removesuffix(default_port)}{rest}"
 
 
 def listed_repos() -> dict[str, str]:

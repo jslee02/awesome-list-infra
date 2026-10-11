@@ -674,6 +674,16 @@ class Round12Test(unittest.TestCase):
             d = triage.decide(s, None, ctx(listed=listed, pick=pick))
             self.assertEqual((d.state, d.labels), ("closed", {"duplicate"}))
 
+    def test_unusable_link_is_asked_for_again(self):
+        form = NEW_FORM.format(box="X").replace(
+            "https://github.com/manankharwar/fusioncore", "https://en.wikipedia.org/wiki/Tool_(robotics)").replace(
+            "manankharwar/fusioncore", "")
+        s = triage.parse_issue("[Suggestion] Tool", form, TODAY)
+        for pick in (False, True):
+            d = triage.decide(s, None, ctx(pick=pick))
+            self.assertEqual((d.state, d.target), ("question", None))
+            self.assertIn("couldn't use the link", d.message)
+
     def test_github_links_in_any_case(self):
         self.assertEqual(triage.repo_in_field("HTTPS://GitHub.com/o/r"), "o/r")
         self.assertEqual(triage.safe_url("HTTPS://Example.com/a"), "HTTPS://Example.com/a")
@@ -683,6 +693,9 @@ class Round12Test(unittest.TestCase):
         self.assertEqual(triage.url_key("https://WWW.Host.Example/Tool/?q=A#x"), "url:host.example/Tool?q=A#x")
         self.assertNotEqual(triage.url_key("https://host.example/Tool"), triage.url_key("https://host.example/tool"))
         self.assertNotEqual(triage.url_key("https://host.example/t"), triage.url_key("https://host.example:8443/t"))
+        self.assertEqual(triage.url_key("https://host.example:443/t"), triage.url_key("https://host.example/t"))
+        self.assertEqual(triage.url_key("http://host.example:80/t"), triage.url_key("http://host.example/t"))
+        self.assertNotEqual(triage.url_key("https://host.example:4430/t"), triage.url_key("https://host.example/t"))
 
     def test_open_entry_prs_by_what_they_add(self):
         from unittest import mock

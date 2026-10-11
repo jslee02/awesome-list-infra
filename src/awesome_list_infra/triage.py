@@ -453,6 +453,10 @@ def pick_description(submitted: str, about: str) -> tuple[str, bool]:
     return (s + ".", True) if s else ("", True)
 
 
+def on_github(url: str) -> bool:
+    return (urllib.parse.urlsplit(url).hostname or "") in ("github.com", "www.github.com")
+
+
 def squash(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
@@ -463,10 +467,9 @@ def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None) -> tu
     repo_name = r.full_name.split("/")[1] if r else ""
     if r and squash(repo_name) not in squash(entry["name"]) and squash(entry["name"]) not in squash(repo_name):
         flags.append(f"Name `{entry['name']}` differs from the repository name `{repo_name}`; check spelling.")
-    url = safe_url(s.url)
-    if r and (not url or "github.com" in url):
-        url = safe_url(r.homepage)
-    if url:
+    # The website: the repository itself is the `github` field.
+    candidates = map(safe_url, (s.url, r.homepage) if r else (s.url,))
+    if url := next((u for u in candidates if u and not (r and on_github(u))), ""):
         entry["url"] = url
     if r:
         entry["github"] = r.full_name
@@ -497,16 +500,17 @@ def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None) -> tu
 
 
 def listed_repos() -> dict[str, str]:
-    """"Name (Category)" of listed repositories, by lowercased owner/repo and by "id:<GitHub ID>"
-    (`_meta.id`, which the list's metadata refresh records)."""
+    """"Name (Category)" of listed repositories, by "id:<GitHub ID>" (`_meta.id`, which the list's
+    metadata refresh records), else by lowercased owner/repo. A known ID decides alone: after a
+    move, another repository may take the old name."""
     listed = {}
     for key, title in KEY_TO_TITLE.items():
         path = DATA / f"{key}.yaml"
         for e in (yaml.safe_load(path.read_text(encoding="utf-8")) or []) if path.exists() else []:
-            if e.get("github"):
-                listed[e["github"].lower()] = f"{e['name']} ({title})"
             if repo_id := (e.get("_meta") or {}).get("id"):
                 listed[f"id:{repo_id}"] = f"{e['name']} ({title})"
+            elif e.get("github"):
+                listed[e["github"].lower()] = f"{e['name']} ({title})"
     return listed
 
 
@@ -940,8 +944,8 @@ def triage(number: int, dry_run: bool) -> str:
         return summary
     # A maintainer may have acted during the lookups above: re-read the issue before writing.
     live = api("GET", f"/repos/{REPO}/issues/{number}")
-    if live["state"] != "open":
-        return f"#{number}: closed while triaging; left as is"
+    if live["state"] != "open" or not is_suggestion(live):
+        return f"#{number}: closed or relabeled while triaging; left as is"
     if (live["title"], live.get("body") or "") != (issue["title"], issue.get("body") or ""):
         return f"#{number}: edited while triaging; the queued run for that edit will decide"
     labels = {l["name"] for l in live["labels"]}

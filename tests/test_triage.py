@@ -615,6 +615,8 @@ class Round12Test(unittest.TestCase):
         # Transferred and renamed since the last metadata refresh: only the ID still matches.
         self.assertEqual(triage.listed_as(listed, repo(full_name="new-owner/new-name", id=42)), "Tool (Control)")
         self.assertIsNone(triage.listed_as(listed, repo(full_name="new-owner/new-name", id=7)))
+        # Another repository took the old name: the known ID still decides.
+        self.assertIsNone(triage.listed_as(listed, repo(full_name="old-owner/old-name", id=99), "old-owner/old-name"))
 
     def test_repo_ids(self):
         from unittest import mock
@@ -642,6 +644,15 @@ class Round12Test(unittest.TestCase):
             self.assertEqual(triage.effective_repo_ids([peer]), {10: 1})  # unless it doesn't exist
             in_body = {**peer, "body": "https://github.com/a/current"}
             self.assertEqual(triage.effective_repo_ids([in_body]), {10: 1})
+
+    def test_website_is_never_github(self):
+        s = triage.parse_issue("[Suggestion] x", NEW_FORM.format(box="X").replace(
+            "https://github.com/manankharwar/fusioncore", "https://project.example/docs?utm_source=github.com"), TODAY)
+        entry, _ = triage.build_entry(s, repo(full_name="manankharwar/fusioncore", homepage="https://h.example"), None)
+        self.assertEqual(entry["url"], "https://project.example/docs?utm_source=github.com")
+        s.url = ""
+        entry, _ = triage.build_entry(s, repo(full_name="manankharwar/fusioncore", homepage="https://github.com/o/r"), None)
+        self.assertNotIn("url", entry)  # a homepage pointing back at GitHub is not a website
 
     def test_closed_pr_from_a_deleted_fork(self):
         pr = {"merged": False, "number": 200, "head": {"ref": "add-entry/issue-160", "repo": None}}

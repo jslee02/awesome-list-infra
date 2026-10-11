@@ -236,6 +236,7 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
     affiliation = fields.get("affiliation") or kv.get("affiliation") or next(
         (m[1] for c in replies if (m := re.search(r"affiliation\s*:\s*(.+)", c, re.I))), "")
     evidence = fields.get("evidence of use") or ("" if is_form else split_evidence(body)[1]) or reply_evidence
+    body_url = (fields.get("url") or kv.get("url") or ("" if is_form else first_link(without_evidence(body)))).strip()
     title_name = re.sub(r"^\s*(\[suggestion\]|(suggest(ion)?|add)\b:?)\s*", "", title or "", flags=re.I)
     return Suggestion(
         # Names never need URLs; dropping them keeps URL-form closing references out of commits.
@@ -248,8 +249,7 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
               or (None if is_form else repo_in_text(without_evidence(body)))
               or next(iter(reply_repos), None)),
         reply_repos=reply_repos,
-        url=(fields.get("url") or kv.get("url") or ("" if is_form else first_link(without_evidence(body)))
-             or reply_url).strip(),
+        url=body_url if safe_url(body_url) or not reply_url else reply_url,
         category=(fields.get("category") or kv.get("category") or "").strip(),
         description=fields.get("description") or kv.get("description") or "",
         alt_repo=fields.get("alternative repository", "").strip(),
@@ -394,10 +394,14 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
             if ctx.pending:
                 return already_suggested(ctx.pending)
             if ctx.pick:
-                if target:
-                    return Decision("needs-review", "Maintainer pick: opening a PR for review.", {"needs-review"},
-                                    target=target)
-                return Decision("needs-review", f"Maintainer pick. {unknown_category(s)}", {"needs-review"})
+                if not target:
+                    return Decision("needs-review", f"Maintainer pick. {unknown_category(s)}", {"needs-review"})
+                if not s.name:  # unlike a GitHub entry, there is no repository name to fall back on
+                    return Decision("needs-review", "Maintainer pick, but I couldn't find the resource's name: put "
+                                    "it in the **Resource Name** field or the issue title and I'll open the PR.",
+                                    {"needs-review"})
+                return Decision("needs-review", "Maintainer pick: opening a PR for review.", {"needs-review"},
+                                target=target)
             if not s.evidence and not ctx.pick:
                 return Decision("question", "This resource is not on GitHub, so a maintainer reviews it by hand, "
                                 "looking for wide use in robotics. Please add **Evidence of use** (edit the issue), "
@@ -1022,11 +1026,11 @@ def triage(number: int, dry_run: bool) -> str:
     if [c["body"] for c in paged(f"/repos/{REPO}/issues/{number}/comments") if c["user"]["login"] == author] != replies:
         return f"#{number}: the author replied while triaging; the queued run for that reply will decide"
     labels = {l["name"] for l in live["labels"]}
-    if ("maintainer-pick" in labels) != ctx.pick:
-        ctx.pick = "maintainer-pick" in labels
-        events = paged(f"/repos/{REPO}/issues/{number}/events")  # includes the new label event
-        ctx.declined = standing_decline(entry_prs, events, ctx.pick)
-        d = decide(s, r, ctx)
+    # A maintainer may have changed maintainer-pick meanwhile, even removing and re-adding it.
+    ctx.pick = "maintainer-pick" in labels
+    events = paged(f"/repos/{REPO}/issues/{number}/events")
+    ctx.declined = standing_decline(entry_prs, events, ctx.pick)
+    d = decide(s, r, ctx)
     if d.target:
         # Another suggestion's open entry PR may already add this resource (its issue was changed
         # to it, or both were picked): defer to that one rather than open a second PR. If both

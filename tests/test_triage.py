@@ -695,6 +695,22 @@ class Round12Test(unittest.TestCase):
             self.assertEqual((d.state, d.target), ("question", None))
             self.assertIn("couldn't use the link", d.message)
 
+    def test_reply_replaces_an_unusable_link(self):
+        form = NEW_FORM.format(box="X").replace(
+            "https://github.com/manankharwar/fusioncore", "https://en.wikipedia.org/wiki/Tool_(robotics)").replace(
+            "manankharwar/fusioncore", "")
+        s = triage.parse_issue("[Suggestion] Tool", form, TODAY, ["The site is https://tool.example/"])
+        self.assertEqual(s.url, "https://tool.example/")
+        usable = triage.parse_issue("[Suggestion] Tool", NEW_FORM.format(box="X"), TODAY, ["See https://tutorial.example"])
+        self.assertEqual(usable.url, "https://github.com/manankharwar/fusioncore")  # a usable body link stays
+
+    def test_pick_needs_a_name_off_github(self):
+        s = triage.parse_issue("[Suggestion]", "Website: https://tool.example\nCategory: Control", TODAY)
+        self.assertEqual(s.name, "")
+        d = triage.decide(s, None, ctx(pick=True))
+        self.assertEqual((d.state, d.target), ("needs-review", None))
+        self.assertIn("name", d.message)
+
     def test_title_commands_are_whole_words(self):
         self.assertEqual(triage.parse_issue("Addison", "", TODAY).name, "Addison")
         self.assertEqual(triage.parse_issue("Add Addison", "", TODAY).name, "Addison")

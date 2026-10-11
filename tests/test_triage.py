@@ -579,3 +579,21 @@ class Round8Test(unittest.TestCase):
     def test_links_in_backticks_or_quotes(self):
         self.assertEqual(triage.first_link("It's at `https://tool.example/docs`."), "https://tool.example/docs")
         self.assertEqual(triage.first_link('see "https://tool.example"'), "https://tool.example")
+
+
+class Round9Test(unittest.TestCase):
+    def test_evidence_key_values_are_not_the_project(self):
+        body = ("### Resource Name\n\nSimTool\n\n### URL\n\nhttps://simtool.example\n\n### GitHub Repository\n\n"
+                "_No response_\n\n### Evidence of use\n\nGitHub: https://github.com/acme/tutorial\n")
+        self.assertIsNone(triage.parse_issue("[Suggestion] SimTool", body, TODAY).repo)
+
+    def test_nested_headings_stay_in_the_evidence_section(self):
+        body = ("Simulator: https://simtool.example\n\n### Evidence of use\n\n#### Tutorials\n\n"
+                "https://github.com/acme/tutorial\n\n### Why\n\nUseful.\n")
+        stripped = triage.without_evidence(body)
+        self.assertNotIn("acme/tutorial", stripped)
+        self.assertIn("### Why", stripped)
+
+    def test_prose_starting_with_evidence_is_kept(self):
+        body = "Evidence-based motion planner: https://github.com/o/r"
+        self.assertEqual(triage.parse_issue("[Suggestion] Planner", body, TODAY).repo, "o/r")

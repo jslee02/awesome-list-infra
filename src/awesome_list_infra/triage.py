@@ -150,9 +150,26 @@ def first_link(text: str) -> str:
 
 
 def without_evidence(text: str) -> str:
-    """Text minus evidence sections ('### Evidence ...' or 'Evidence: ...' up to the next heading),
-    whose links cite other projects."""
-    return re.sub(r"(?ims)^[ \t]*(?:#{1,6}[ \t]*)?evidence\b.*?(?=^[ \t]*#{1,6}[ \t]|\Z)", "", text or "")
+    """Text minus evidence sections, whose links cite other projects.
+
+    A section starts at an explicit marker: an 'Evidence ...' heading (until a heading of the same
+    or a higher level) or an 'Evidence:' field (until the next heading). Prose that merely begins
+    with the word, like 'Evidence-based planner: ...', stays.
+    """
+    out, skip = [], None  # skip: the heading level that ends the current evidence section
+    for line in (text or "").splitlines():
+        heading = re.match(r"[ \t]*(#{1,6})[ \t]", line)
+        if skip is not None:
+            if not heading or len(heading[1]) > skip:
+                continue
+            skip = None
+        if marker := re.match(r"[ \t]*(#{1,6})[ \t]*evidence\b", line, re.I):
+            skip = len(marker[1])
+        elif re.match(r"[ \t]*[*_]*evidence[*_]*[ \t]*:", line, re.I):
+            skip = 6  # a field: until the next heading of any level
+        else:
+            out.append(line)
+    return "\n".join(out)
 
 
 def clean_text(text: str, limit: int) -> str:
@@ -196,7 +213,8 @@ class Suggestion:
 def parse_issue(title: str, body: str, created: date, author_comments: list[str] = ()) -> Suggestion:
     fields = form_fields(body)
     is_form = "resource name" in fields  # the suggestion form's own first field, not any ### heading
-    kv = {k.lower(): v for k, v in KEY_VALUE.findall(body or "")}
+    # 'Key: value' lines are for free-form bodies only, outside evidence sections.
+    kv = {} if is_form else {k.lower(): v for k, v in KEY_VALUE.findall(without_evidence(body))}
     replies = list(reversed(list(author_comments)))
     reply_repos: list[str] = []
     reply_url = ""

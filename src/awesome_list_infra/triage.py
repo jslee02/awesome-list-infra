@@ -144,8 +144,15 @@ def form_fields(body: str) -> dict[str, str]:
 
 
 def first_link(text: str) -> str:
-    m = re.search(r"https?://[^\s)>\]]+", text or "")
+    """The first http(s) link, without surrounding Markdown delimiters or trailing punctuation."""
+    m = re.search(r"""https?://[^\s)>\]"'`]+""", text or "")
     return m[0].rstrip(".,;:") if m else ""
+
+
+def without_evidence(text: str) -> str:
+    """Text minus evidence sections ('### Evidence ...' or 'Evidence: ...' up to the next heading),
+    whose links cite other projects."""
+    return re.sub(r"(?ims)^[ \t]*(?:#{1,6}[ \t]*)?evidence\b.*?(?=^[ \t]*#{1,6}[ \t]|\Z)", "", text or "")
 
 
 def clean_text(text: str, limit: int) -> str:
@@ -212,10 +219,11 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
               or repo_in_field(kv.get("github", ""))
               or repo_in_text(fields.get("url", "") or kv.get("url", ""))
               # Free-form bodies only: a form's other sections (evidence, why) cite other projects.
-              or (None if is_form else repo_in_text(body))
+              or (None if is_form else repo_in_text(without_evidence(body)))
               or next(iter(reply_repos), None)),
         reply_repos=reply_repos,
-        url=(fields.get("url") or kv.get("url") or ("" if is_form else first_link(body)) or reply_url).strip(),
+        url=(fields.get("url") or kv.get("url") or ("" if is_form else first_link(without_evidence(body)))
+             or reply_url).strip(),
         category=(fields.get("category") or kv.get("category") or "").strip(),
         description=fields.get("description") or kv.get("description") or "",
         alt_repo=fields.get("alternative repository", "").strip(),

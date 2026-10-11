@@ -567,3 +567,15 @@ class Round7Test(unittest.TestCase):
         s = triage.parse_issue("[Suggestion] SimTool", "A commercial simulator.", TODAY,
                                ["It's at https://tool.example\nEvidence: https://paper.example/cites"])
         self.assertEqual(s.url, "https://tool.example")
+
+
+class Round8Test(unittest.TestCase):
+    def test_free_form_evidence_links_are_not_the_project(self):
+        body = ("SimTool is a commercial simulator: https://simtool.example\n\n"
+                "### Evidence of use\n\nTutorial: https://github.com/someone/simtool-tutorial\n")
+        s = triage.parse_issue("[Suggestion] SimTool", body, TODAY)
+        self.assertEqual((s.repo, s.url), (None, "https://simtool.example"))
+
+    def test_links_in_backticks_or_quotes(self):
+        self.assertEqual(triage.first_link("It's at `https://tool.example/docs`."), "https://tool.example/docs")
+        self.assertEqual(triage.first_link('see "https://tool.example"'), "https://tool.example")

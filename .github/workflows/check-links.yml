@@ -24,6 +24,12 @@ on:
       infra-ref:
         type: string
         default: "main"
+      generate-command:
+        type: string
+        default: ""
+        description: >-
+          Regenerates README.md from data after link fixes (e.g. "python3
+          scripts/generate_readme.py"), for lists whose README is generated.
 
 jobs:
   check-links:
@@ -103,6 +109,16 @@ jobs:
           set -euo pipefail
           PYTHONPATH=.awesome-list-infra/src \
             python -m awesome_list_infra.fix_links lychee/results.json
+
+      - name: Regenerate README from fixed data
+        if: steps.fix.outputs.fixes_applied == 'true' && inputs.generate-command != ''
+        shell: bash
+        env:
+          GENERATE_COMMAND: ${{ inputs.generate-command }}
+        run: |
+          set -euo pipefail
+          pip install pyyaml
+          eval "$GENERATE_COMMAND"
 
       - name: Create pull request with fixes
         if: steps.fix.outputs.fixes_applied == 'true'

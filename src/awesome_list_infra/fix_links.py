@@ -65,10 +65,12 @@ def apply_fixes(
     pattern = build_replacement_pattern(fixes)
     changes: dict[str, list[tuple[str, str]]] = {}
 
-    for md_file in sorted(root.rglob("*.md")):
-        if any(part.startswith(".") for part in md_file.parts):
-            continue
-        if "lychee" in md_file.parts:
+    # Data files too: in generated lists the README is rebuilt from data/, so a
+    # fix applied only to the README would be overwritten.
+    data_files = [f for pattern in ("data/**/*.yaml", "data/**/*.yml") for f in root.glob(pattern)]
+    for md_file in sorted(set(root.rglob("*.md")) | set(data_files)):
+        parts = md_file.relative_to(root).parts
+        if any(part.startswith(".") for part in parts) or "lychee" in parts:
             continue
 
         content = md_file.read_text(encoding="utf-8")

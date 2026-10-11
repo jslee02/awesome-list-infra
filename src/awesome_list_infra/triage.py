@@ -479,13 +479,10 @@ def pick_description(submitted: str, about: str) -> tuple[str, bool]:
             return s + ".", False
     s = one_sentence(submitted) or one_sentence(about)
     if len(s) > 99:
-        s = s[:99].rsplit(" ", 1)[0]
-        # Never end on a word that needs a continuation ("... rejection for."), even before
-        # punctuation ("for,"); a hyphenated word such as "built-in" is a whole word. Words that
-        # can complete a phrasal verb ("can build on", "plug in") stay, so meaning is kept.
-        while (t := re.sub(r"\s+(?:a|an|the|and|or|of|for|to|at|from|as|via|into)$", "",
-                           s.rstrip(",;:-–— "), flags=re.I)) != s:
-            s = t
+        # Mark the cut rather than guess which words could go: no word list tells a dangling "for"
+        # ("... rejection for") from one that ends a clause ("a panel operators look at"). The PR
+        # flags it, and a maintainer rewrites it.
+        return s[:100].rsplit(" ", 1)[0].rstrip(",;:-–— ") + "…", True  # whole words, 99 characters at most
     return (s + ".", True) if s else ("", True)
 
 

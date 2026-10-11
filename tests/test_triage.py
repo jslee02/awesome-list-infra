@@ -243,22 +243,17 @@ class EntryTest(unittest.TestCase):
         desc, trimmed = triage.pick_description(long, "")
         self.assertTrue(trimmed)
         self.assertLessEqual(len(desc), 100)
-        # Seen on a real suggestion: a cut at 99 characters left "... outlier rejection for."
+        # A cut keeps every word before it and is marked with "…", so it never changes meaning. The cases
+        # come from a real suggestion (FusionCore) and from review.
         fusioncore = ("ROS 2 UKF fusing GPS, IMU, and wheel odometry with adaptive noise and GPS outlier rejection "
                       "for robust outdoor localization.")
         self.assertEqual(triage.pick_description(fusioncore, ""), ("ROS 2 UKF fusing GPS, IMU, and wheel odometry "
-                         "with adaptive noise and GPS outlier rejection.", True))
-        self.assertEqual(triage.pick_description("Tools for " * 12, ""), ("Tools for Tools for Tools for Tools for "
-                         "Tools for Tools for Tools for Tools for Tools for Tools.", True))
-        filler = "Planner " * 11  # 88 characters, so the cut falls in the last words
-        cut_after = "Planner " * 10 + "Rapid built-in tools for everyone"  # the cut falls after "built-in"
-        self.assertEqual(triage.pick_description(cut_after, ""),
-                         ("Planner " * 10 + "Rapid built-in.", True))  # hyphenated words stay whole
-        self.assertEqual(triage.pick_description(filler + "made for, and with, everyone", ""),
-                         (filler.rstrip() + " made.", True))  # dangling words before punctuation go too
-        filler = "Planner " * 7 + "Fast "  # 61 characters, so the cut falls right after "on"
-        self.assertEqual(triage.pick_description(filler + "A foundation developers can build on top of anything", ""),
-                         (filler + "A foundation developers can build on.", True))  # phrasal verbs keep their meaning
+                         "with adaptive noise and GPS outlier rejection for…", True))
+        for kept, rest in (("Rapid built-in", " tools for all"), ("A foundation developers can build on", " top of it"),
+                           ("A panel operators can look at", " during runs"), ("Solvers for robotics and OR", " work"),
+                           ("Tools made for,", " and with, everyone")):
+            prefix = "x" * (98 - len(kept)) + " "  # prefix + kept is exactly 99 characters: the cut falls after it
+            self.assertEqual(triage.pick_description(prefix + kept + rest, ""), (prefix + kept.rstrip(",") + "…", True))
         self.assertEqual(triage.pick_description("Too short", "Time-indexed storage for robotics data."),
                          ("Time-indexed storage for robotics data.", False))
 

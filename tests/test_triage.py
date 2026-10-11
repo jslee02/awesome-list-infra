@@ -250,6 +250,12 @@ class EntryTest(unittest.TestCase):
                          "with adaptive noise and GPS outlier rejection.", True))
         self.assertEqual(triage.pick_description("Tools for " * 12, ""), ("Tools for Tools for Tools for Tools for "
                          "Tools for Tools for Tools for Tools for Tools for Tools.", True))
+        filler = "Planner " * 11  # 88 characters, so the cut falls in the last words
+        cut_after = "Planner " * 10 + "Rapid built-in tools for everyone"  # the cut falls after "built-in"
+        self.assertEqual(triage.pick_description(cut_after, ""),
+                         ("Planner " * 10 + "Rapid built-in.", True))  # hyphenated words stay whole
+        self.assertEqual(triage.pick_description(filler + "made for, and with, everyone", ""),
+                         (filler.rstrip() + " made.", True))  # dangling words before punctuation go too
         self.assertEqual(triage.pick_description("Too short", "Time-indexed storage for robotics data."),
                          ("Time-indexed storage for robotics data.", False))
 

@@ -480,9 +480,11 @@ def pick_description(submitted: str, about: str) -> tuple[str, bool]:
     s = one_sentence(submitted) or one_sentence(about)
     if len(s) > 99:
         s = s[:99].rsplit(" ", 1)[0]
-        # Never end on a word that needs a continuation ("... outlier rejection for.").
-        s = re.sub(r"(?:[\s,;:\-–—]+(?:a|an|the|and|or|of|for|to|in|on|at|by|with|from|as|via|into))+$", "", s, flags=re.I)
-        s = s.rstrip(",;:-–— ")
+        # Never end on a word that needs a continuation ("... rejection for."), even before
+        # punctuation ("for,"); a hyphenated word such as "built-in" is a whole word.
+        while (t := re.sub(r"\s+(?:a|an|the|and|or|of|for|to|in|on|at|by|with|from|as|via|into)$", "",
+                           s.rstrip(",;:-–— "), flags=re.I)) != s:
+            s = t
     return (s + ".", True) if s else ("", True)
 
 

@@ -344,6 +344,11 @@ def already_listed(listed: str) -> Decision:
                     "edit its `data/*.yaml` file in a PR.", {"duplicate"}, close=True)
 
 
+def already_suggested(number: int) -> Decision:
+    return Decision("closed", f"Thanks! This is already suggested in #{number}; please follow that issue.",
+                    {"duplicate"}, close=True)
+
+
 BAR = "[acceptance bar](https://github.com/{repo}/blob/main/CONTRIBUTING.md#acceptance-bar)"
 
 
@@ -377,6 +382,8 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
             same = entry_keys(build_entry(s, None, None)[0])
             if listed := next((ctx.listed[k] for k in same if k in ctx.listed), None):
                 return already_listed(listed)
+            if ctx.pending:
+                return already_suggested(ctx.pending)
             if ctx.pick and target:
                 return Decision("needs-review", "Maintainer pick: opening a PR for review.", {"needs-review"}, target=target)
             if not s.evidence and not ctx.pick:
@@ -395,8 +402,7 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
     if listed := listed_as(ctx.listed, r, s.repo):
         return already_listed(listed)
     if ctx.pending:
-        return Decision("closed", f"Thanks! This repository is already suggested in #{ctx.pending}; "
-                        "please follow that issue.", {"duplicate"}, close=True)
+        return already_suggested(ctx.pending)
     if r.archived:
         return Decision("closed", "Thanks! The repository is archived, so it can't be added as a new entry.", close=True)
 
@@ -516,7 +522,14 @@ def entry_keys(e: dict) -> set[str]:
         return {e["github"].lower()}
     urls = [e.get("url"), e.get("code_url"), e.get("gitlab") and f"https://gitlab.com/{e['gitlab']}",
             e.get("bitbucket") and f"https://bitbucket.org/{e['bitbucket']}"]
-    return {"url:" + re.sub(r"^https?://(www\.)?", "", u.lower()).rstrip("/") for u in urls if u}
+    return {url_key(u) for u in urls if u}
+
+
+def url_key(url: str) -> str:
+    """A URL as an entry key: the host lowercased, as hosts are case-insensitive; the rest as given."""
+    p = urllib.parse.urlsplit(url)
+    rest = p.path.rstrip("/") + (f"?{p.query}" if p.query else "") + (f"#{p.fragment}" if p.fragment else "")
+    return f"url:{(p.hostname or '').removeprefix('www.')}{rest}"
 
 
 def listed_repos() -> dict[str, str]:
@@ -861,7 +874,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
         "", decision, "",
         "**Review:** in scope? Right category? Name and description in house style?",
         *([""] + [f"- ⚠️ {f}" for f in flags] if flags else []),
-        "", marker, f"Closes #{number}",
+        "", marker, f"<!-- keys {' '.join(sorted(entry_keys(entry)))} -->", f"Closes #{number}",
     ])
     title = f"content: add {entry['name']}"
     if regenerate:
@@ -874,6 +887,17 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
         if e.code != 422:  # 422: a concurrent run opened it first
             raise
         return api("GET", f"/repos/{REPO}/pulls?state=open&head={REPO.split('/')[0]}:{branch}")[0]["html_url"]
+
+
+def entry_pr_keys() -> dict[int, set[str]]:
+    """Issue number -> `entry_keys` of what its open entry PR adds, from the PR body's marker."""
+    result = {}
+    for pr in paged(f"/repos/{REPO}/pulls?state=open"):
+        m = re.fullmatch(r"add-entry/issue-(\d+)", pr["head"]["ref"])
+        keys = re.search(r"<!-- keys ([^>]*) -->", pr["body"] or "")
+        if m and keys and (pr["head"]["repo"] or {}).get("full_name") == REPO:
+            result[int(m[1])] = set(keys[1].split())
+    return result
 
 
 def push_new_branch(branch: str) -> str | None:
@@ -972,6 +996,14 @@ def triage(number: int, dry_run: bool) -> str:
         ctx.declined = standing_decline(entry_prs, events, ctx.pick)
         d = decide(s, r, ctx)
         summary = f"#{number}: {d.state} (maintainer-pick changed during triage)"
+    if d.target:
+        # Another suggestion's open entry PR may already add this resource (its issue was changed
+        # to it, or both were picked): defer to that one rather than open a second PR. If both
+        # already have PRs (runs raced), neither defers; a maintainer picks one.
+        keys, prs = entry_keys(build_entry(s, r, None)[0]), entry_pr_keys()
+        if not keys & prs.get(number, set()) and (other := min((n for n, k in prs.items() if keys & k), default=None)):
+            ctx.pending = other
+            d = decide(s, r, ctx)
     url = open_pr(number, s, r, d.target, d.message, events, ctx.pick) if d.target else None
     if url == LISTED:
         ctx.listed = listed_repos()  # the working tree is now at the fresh main

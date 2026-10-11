@@ -659,13 +659,30 @@ class Round12Test(unittest.TestCase):
         for e in [{"name": "RobWork", "url": "https://robwork.dk/", "gitlab": "sdurobotics/RobWork"},
                   {"name": "R", "github": "o/r", "url": "https://robwork.dk/"}]:  # a GitHub entry's website isn't its identity
             listed |= dict.fromkeys(triage.entry_keys(e), e["name"])
-        self.assertEqual(listed, {"url:robwork.dk": "RobWork", "url:gitlab.com/sdurobotics/robwork": "RobWork", "o/r": "R"})
+        self.assertEqual(listed, {"url:robwork.dk": "RobWork", "url:gitlab.com/sdurobotics/RobWork": "RobWork", "o/r": "R"})
         form = NEW_FORM.format(box="X").replace(
             "https://github.com/manankharwar/fusioncore", "https://www.robwork.dk").replace("manankharwar/fusioncore", "")
         s = triage.parse_issue("[Suggestion] RobWork", form, TODAY)
         for pick in (False, True):
             d = triage.decide(s, None, ctx(listed=listed, pick=pick))
             self.assertEqual((d.state, d.labels), ("closed", {"duplicate"}))
+
+    def test_url_keys_keep_case_beyond_the_host(self):
+        self.assertEqual(triage.url_key("https://WWW.Host.Example/Tool/?q=A#x"), "url:host.example/Tool?q=A#x")
+        self.assertNotEqual(triage.url_key("https://host.example/Tool"), triage.url_key("https://host.example/tool"))
+
+    def test_open_entry_prs_by_what_they_add(self):
+        from unittest import mock
+        pr = lambda ref, body, repo=triage.REPO: {"head": {"ref": ref, "repo": {"full_name": repo}}, "body": body}
+        prs = [pr("add-entry/issue-5", "x\n<!-- keys id:42 -->\nCloses #5"),
+               pr("add-entry/issue-6", "no marker"),
+               pr("add-entry/issue-7", "<!-- keys id:42 -->", repo="fork/x"),
+               pr("feature/y", "<!-- keys id:42 -->")]
+        with mock.patch.object(triage, "paged", return_value=prs):
+            self.assertEqual(triage.entry_pr_keys(), {5: {"id:42"}})
+        attested = triage.parse_issue("[Suggestion] FusionCore", NEW_FORM.format(box="X"), TODAY)
+        d = triage.decide(attested, repo(), ctx(pending=5))  # deferring to #5's PR closes this one
+        self.assertEqual((d.close, d.labels), (True, {"duplicate"}))
 
     def test_closed_pr_from_a_deleted_fork(self):
         pr = {"merged": False, "number": 200, "head": {"ref": "add-entry/issue-160", "repo": None}}

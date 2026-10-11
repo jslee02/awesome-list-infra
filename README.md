@@ -72,6 +72,9 @@ permissions:
 jobs:
   check-links:
     uses: jslee02/awesome-list-infra/.github/workflows/check-links.yml@main
+    with:
+      # For lists whose README is generated; omit otherwise.
+      generate-command: python3 scripts/generate_readme.py
 ```
 
 Pull requests fail only on definitive broken links. Scheduled runs try to
@@ -153,7 +156,9 @@ The called workflow inspects the pull request diff through the GitHub API
 without checking out or executing contributor code. Human PRs that add a
 net-new `- name:` entry under `data/` receive a kind redirect comment and are
 closed. Bot PRs are skipped by default so accepted suggestion automation and
-maintenance updates can still open resource or metadata PRs.
+maintenance updates can still open resource or metadata PRs. PRs from owners,
+members, and collaborators are always skipped, so maintainers can add entries
+directly.
 
 ### Stale Author-Action Issues
 

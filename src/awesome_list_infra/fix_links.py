@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -53,25 +54,125 @@ def get_unfixable(report: dict, fixed_urls: set[str]) -> dict[str, list[dict]]:
     return unfixable
 
 
+# A match must end where the URL ends, so fixing ".../a" leaves ".../abc",
+# ".../a.html", ".../a,b", and ".../a(1)" alone. ")" and quotes can't count as
+# URL characters: they close Markdown links and quoted YAML values. URLs can't
+# contain spaces, so "." or "," followed by whitespace, a closing bracket, or the
+# end is punctuation (end of a sentence, a flow-YAML separator), not URL.
+URL_CONTINUES = r"(?![A-Za-z0-9_\-~%!$&*+;=:@/?#(]|[.,](?=[^\s\]}]))"
+
+
 def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:
     sorted_urls = sorted(fixes.keys(), key=len, reverse=True)
-    return re.compile("|".join(re.escape(url) for url in sorted_urls))
+    return re.compile("(?:" + "|".join(re.escape(url) for url in sorted_urls) + ")" + URL_CONTINUES)
+
+
+def read_text(path: Path) -> str:
+    """File text with its line endings untouched (CRLF files stay CRLF)."""
+    with open(path, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def write_text(path: Path, text: str) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
+def fix_targets(root: Path) -> list[Path]:
+    """Markdown plus the data and config files a generated README is built from."""
+    sources = [f for glob in ("data/**/*.yaml", "data/**/*.yml", "awesome-list.yaml") for f in root.glob(glob)]
+    return [
+        f for f in sorted(set(root.rglob("*.md")) | set(sources))
+        if not any(part.startswith(".") or part == "lychee" for part in f.relative_to(root).parts)
+    ]
+
+
+def only_strings_changed(old_text: str, new_text: str, fix) -> bool:
+    """Whether new_text parses to the same YAML tree with each string passed through `fix`.
+
+    Catches replacements that break quoting or reshape the document (a URL with a
+    comma inside a flow sequence, for example).
+    """
+    import yaml  # imported here so Markdown-only lists don't need PyYAML
+
+    try:
+        old, new = yaml.safe_load(old_text), yaml.safe_load(new_text)
+    except yaml.YAMLError:
+        return False
+
+    seen: set[tuple[int, int]] = set()  # anchors can make the tree cyclic
+
+    def same(a, b) -> bool:
+        if (id(a), id(b)) in seen:
+            return True
+        seen.add((id(a), id(b)))
+        if isinstance(a, dict):
+            return isinstance(b, dict) and list(a) == list(b) and all(same(a[k], b[k]) for k in a)
+        if isinstance(a, list):
+            return isinstance(b, list) and len(a) == len(b) and all(map(same, a, b))
+        if isinstance(a, str):
+            return b == fix(a)
+        return a == b
+
+    return same(old, new)
+
+
+def unsafe_data_fixes(fixes: dict[str, str], root: Path) -> set[str]:
+    """URLs that can't be fixed cleanly in a YAML file, so they're left unfixed everywhere.
+
+    Dropping them from the Markdown too keeps a generated README in sync with its data.
+    """
+    def corrupts(content: str, subset: dict[str, str]) -> bool:
+        pattern = build_replacement_pattern(subset)
+
+        def fix(text: str) -> str:
+            return pattern.sub(lambda m: subset[m.group(0)], text)
+
+        new_content = fix(content)
+        return new_content != content and not only_strings_changed(content, new_content, fix)
+
+    rejected: set[str] = set()
+    for path in fix_targets(root):
+        if path.suffix not in (".yaml", ".yml"):
+            continue
+        content = read_text(path)
+        # A URL present in the data that no match here would replace (it continues past the
+        # fixed prefix, or sits in compact flow YAML like "url: x,next: y") can't be fixed
+        # consistently, so leave it everywhere rather than fix only the generated Markdown.
+        matched = set(build_replacement_pattern(fixes).findall(content))
+        if unmatched := {url for url in fixes if url in content} - matched:
+            print(f"  not fixing {sorted(unmatched)}: {path} has them where they can't be replaced cleanly", file=sys.stderr)
+            rejected |= unmatched
+        if not corrupts(content, fixes):
+            continue
+        # Reject only the URLs that are unsafe on their own; if the rest still
+        # interact badly, reject everything this file would have changed.
+        in_file = set(build_replacement_pattern(fixes).findall(content))
+        bad = {url for url in in_file if corrupts(content, {url: fixes[url]})}
+        rest = {url: fixes[url] for url in in_file - bad}
+        if rest and corrupts(content, rest):
+            bad = in_file
+        print(f"  not fixing {sorted(bad)} in {path}: the replacement would corrupt the YAML", file=sys.stderr)
+        rejected |= bad
+    return rejected
 
 
 def apply_fixes(
     fixes: dict[str, str],
     root: Path,
 ) -> dict[str, list[tuple[str, str]]]:
+    rejected = unsafe_data_fixes(fixes, root)
+    fixes = {url: new for url, new in fixes.items() if url not in rejected}
+    if not fixes:
+        return {}
     pattern = build_replacement_pattern(fixes)
     changes: dict[str, list[tuple[str, str]]] = {}
 
-    for md_file in sorted(root.rglob("*.md")):
-        if any(part.startswith(".") for part in md_file.parts):
-            continue
-        if "lychee" in md_file.parts:
-            continue
+    # Data and config files too: in generated lists the README is rebuilt from
+    # them, so a fix applied only to the README would be overwritten.
+    for md_file in fix_targets(root):
 
-        content = md_file.read_text(encoding="utf-8")
+        content = read_text(md_file)
         seen: set[str] = set()
         file_fixes: list[tuple[str, str]] = []
 
@@ -85,7 +186,7 @@ def apply_fixes(
 
         new_content = pattern.sub(replace, content)
         if new_content != content:
-            md_file.write_text(new_content, encoding="utf-8")
+            write_text(md_file, new_content)
             changes[str(md_file.relative_to(root))] = file_fixes
 
     return changes
@@ -171,9 +272,45 @@ def set_output(name: str, value: str) -> None:
     print(f"  ::output:: {name}={value}")
 
 
+OUTPUT_EXCLUDES = [":(exclude)lychee", ":(exclude).awesome-list-infra"]
+
+
+def reverted_fixes(applied: dict[str, str], root: Path) -> list[str]:
+    """Fixed URLs that are back in Markdown, e.g. because a README generator emits them itself."""
+    markdown = [read_text(f) for f in fix_targets(root) if f.suffix == ".md"]
+    return sorted(old for old in applied
+                  if any(build_replacement_pattern({old: ""}).search(text) for text in markdown))
+
+
+def verify_after_regeneration(applied_path: Path, root: Path, out_dir: Path) -> None:
+    """Report fixes the README generator undid, and whether any fix is left for a PR."""
+    applied = json.loads(applied_path.read_text(encoding="utf-8"))
+    reverted = reverted_fixes(applied, root)
+    if reverted:
+        report = out_dir / "unfixed-links.md"
+        lines = [
+            "### Restored by the README generator\n",
+            "These links come from the generator itself, so fix them there:\n",
+            *(f"- [ ] {old} -> {applied[old]}" for old in reverted),
+            "",
+        ]
+        with open(report, "a", encoding="utf-8") as f:
+            if report.stat().st_size if report.exists() else 0:
+                f.write("\n")
+            f.write("\n".join(lines))
+    # Ignore this job's own outputs: the lychee/ reports and the infra checkout.
+    changed = subprocess.run(["git", "status", "--porcelain", "--", ".", *OUTPUT_EXCLUDES], cwd=root,
+                             capture_output=True, text=True, check=True).stdout.strip()
+    set_output("fixes_applied", "true" if changed else "false")
+    set_output("has_unfixable", "true" if reverted else "false")
+
+
 def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--verify":
+        verify_after_regeneration(Path(sys.argv[2]), Path("."), Path("lychee"))
+        return
     if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <lychee-report.json>", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <lychee-report.json> | --verify <applied-fixes.json>", file=sys.stderr)
         sys.exit(1)
 
     report = load_report(sys.argv[1])
@@ -191,6 +328,8 @@ def main() -> None:
     print(f"Redirect fixes : {len(redirect_fixes)}")
     print(f"Wayback fixes  : {len(wayback_fixes)}")
 
+    for url in unsafe_data_fixes(all_fixes, root) if all_fixes else ():
+        all_fixes.pop(url)
     unfixable = get_unfixable(report, set(all_fixes.keys()))
 
     if not all_fixes:
@@ -207,6 +346,8 @@ def main() -> None:
         return
 
     changes = apply_fixes(all_fixes, root)
+    applied = {old: new for fixes in changes.values() for old, new in fixes}
+    (out_dir / "applied-fixes.json").write_text(json.dumps(applied, indent=2), encoding="utf-8")
     print(f"Files modified  : {len(changes)}")
     for filepath, fixes in sorted(changes.items()):
         for old, new in fixes:

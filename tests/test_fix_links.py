@@ -21,6 +21,24 @@ class ApplyFixesTest(unittest.TestCase):
             self.assertIn("https://new.example/a", (root / "data" / "tools.yaml").read_text(encoding="utf-8"))
             self.assertIn("http://old.example/a", (root / ".github" / "notes.md").read_text(encoding="utf-8"))
 
+    def test_only_complete_urls_are_replaced(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "data").mkdir()
+            data = root / "data" / "tools.yaml"
+            data.write_text("- url: http://old.example/a\n- url: http://old.example/abc\n"
+                            "- url: 'http://old.example/a'\n", encoding="utf-8")
+            (root / "README.md").write_text("[A](http://old.example/a) and http://old.example/a.html\n",
+                                            encoding="utf-8")
+
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+
+            self.assertEqual(data.read_text(encoding="utf-8"),
+                             "- url: https://new.example/a\n- url: http://old.example/abc\n"
+                             "- url: 'https://new.example/a'\n")
+            self.assertEqual((root / "README.md").read_text(encoding="utf-8"),
+                             "[A](https://new.example/a) and http://old.example/a.html\n")
+
 
 if __name__ == "__main__":
     unittest.main()

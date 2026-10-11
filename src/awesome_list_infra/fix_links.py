@@ -53,9 +53,13 @@ def get_unfixable(report: dict, fixed_urls: set[str]) -> dict[str, list[dict]]:
     return unfixable
 
 
+# A match must end where the URL ends, so fixing ".../a" leaves ".../abc" alone.
+URL_CONTINUES = r"(?![A-Za-z0-9_\-.~%!$&*+,;=:@/?#])"
+
+
 def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:
     sorted_urls = sorted(fixes.keys(), key=len, reverse=True)
-    return re.compile("|".join(re.escape(url) for url in sorted_urls))
+    return re.compile("(?:" + "|".join(re.escape(url) for url in sorted_urls) + ")" + URL_CONTINUES)
 
 
 def apply_fixes(

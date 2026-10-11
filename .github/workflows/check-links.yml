@@ -115,6 +115,8 @@ jobs:
         shell: bash
         env:
           GENERATE_COMMAND: ${{ inputs.generate-command }}
+          # Generic lists' generators import awesome_list_infra from the checkout above.
+          PYTHONPATH: .awesome-list-infra/src
         run: |
           set -euo pipefail
           pip install pyyaml

@@ -284,6 +284,7 @@ class RepoInfo:
     about: str = ""
     homepage: str = ""
     language: str = ""
+    id: int = 0  # GitHub repository ID; unlike owner/repo, it survives renames and transfers
 
 
 def gate_rows(r: RepoInfo, today: date) -> list[tuple[str, str, str, bool]]:
@@ -333,7 +334,7 @@ class Context:
     other_open: list[int]  # the author's other open suggestions under review
     insider: bool
     pick: bool  # maintainer-pick label
-    pending: dict[str, int] = field(default_factory=dict)  # lowercased owner/repo -> older open suggestion
+    pending: int | None = None  # the older open suggestion of the same repository
     declined: int | None = None  # entry PR a maintainer closed without merging
     monitoring_since: date | None = None
 
@@ -383,13 +384,12 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
     if r is None:
         return Decision("question", f"I couldn't find `github.com/{s.repo}`. Please fix the **GitHub Repository** "
                         "field (edit the issue) or reply with the right `owner/repo`.", {"question"})
-    for slug in {s.repo.lower(), r.full_name.lower()}:
-        if slug in ctx.listed:
-            return Decision("closed", f"Thanks! This is already listed as **{ctx.listed[slug]}**. To change that "
-                            "entry, edit its `data/*.yaml` file in a PR.", {"duplicate"}, close=True)
-        if slug in ctx.pending:
-            return Decision("closed", f"Thanks! This repository is already suggested in #{ctx.pending[slug]}; "
-                            "please follow that issue.", {"duplicate"}, close=True)
+    if listed := listed_as(ctx.listed, r, s.repo):
+        return Decision("closed", f"Thanks! This is already listed as **{listed}**. To change that "
+                        "entry, edit its `data/*.yaml` file in a PR.", {"duplicate"}, close=True)
+    if ctx.pending:
+        return Decision("closed", f"Thanks! This repository is already suggested in #{ctx.pending}; "
+                        "please follow that issue.", {"duplicate"}, close=True)
     if r.archived:
         return Decision("closed", "Thanks! The repository is archived, so it can't be added as a new entry.", close=True)
 
@@ -487,7 +487,7 @@ def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None) -> tu
     if subsection:
         entry["_subsection"] = subsection
     if r:
-        meta = {"stars": r.stars, "last_commit": r.last_commit.isoformat()}
+        meta = {"id": r.id, "stars": r.stars, "last_commit": r.last_commit.isoformat()}
         if r.license and r.license != "NOASSERTION":
             meta["license"] = r.license
         if r.language:
@@ -497,13 +497,23 @@ def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None) -> tu
 
 
 def listed_repos() -> dict[str, str]:
+    """"Name (Category)" of listed repositories, by lowercased owner/repo and by "id:<GitHub ID>"
+    (`_meta.id`, which the list's metadata refresh records)."""
     listed = {}
     for key, title in KEY_TO_TITLE.items():
         path = DATA / f"{key}.yaml"
         for e in (yaml.safe_load(path.read_text(encoding="utf-8")) or []) if path.exists() else []:
             if e.get("github"):
                 listed[e["github"].lower()] = f"{e['name']} ({title})"
+            if repo_id := (e.get("_meta") or {}).get("id"):
+                listed[f"id:{repo_id}"] = f"{e['name']} ({title})"
     return listed
+
+
+def listed_as(listed: dict[str, str], r: RepoInfo, *slugs: str) -> str | None:
+    """How repository `r` (also known by `slugs`) is listed, if it is. The ID matches entries
+    recorded under a name the repository has since changed."""
+    return next((listed[k] for k in (f"id:{r.id}", r.full_name.lower(), *map(str.lower, slugs)) if k in listed), None)
 
 
 def add_entry(entry: dict, key: str) -> None:
@@ -584,14 +594,36 @@ def outside_people(owner: str, name: str) -> tuple[int, bool]:
     return len(people), False
 
 
-def canonical_repo(slug: str) -> str | None:
-    """owner/repo as GitHub names it now (following renames), or None if it doesn't exist."""
-    try:
-        return api("GET", f"/repos/{slug}")["full_name"]
-    except urllib.error.HTTPError as e:
-        if e.code in (404, 451):
-            return None
-        raise
+def repo_ids(slugs) -> dict[str, int | None]:
+    """GitHub IDs of owner/repo slugs, or None for repositories that don't exist. Like the REST
+    API, GraphQL follows renames and transfers; one request covers up to 100 slugs."""
+    slugs, ids = list(dict.fromkeys(slugs)), {}
+    for start in range(0, len(slugs), 100):
+        chunk = slugs[start:start + 100]
+        params = ",".join(f"$o{i}:String!,$n{i}:String!" for i in range(len(chunk)))
+        fields = " ".join(f"r{i}:repository(owner:$o{i},name:$n{i}){{databaseId}}" for i in range(len(chunk)))
+        variables = {f"{k}{i}": part for i, slug in enumerate(chunk) for k, part in zip("on", slug.split("/"))}
+        data = api("POST", "/graphql", {"query": f"query({params}){{{fields}}}", "variables": variables})
+        if data.get("data") is None or any(e.get("type") != "NOT_FOUND" for e in data.get("errors") or []):
+            raise RuntimeError(f"GraphQL repository lookup failed: {data.get('errors')}")  # the next run retries
+        ids |= {slug: (data["data"][f"r{i}"] or {}).get("databaseId") for i, slug in enumerate(chunk)}
+    return ids
+
+
+def effective_repo_ids(issues: list[dict]) -> dict[int, int | None]:
+    """Issue number -> ID of the repository that suggestion's own triage evaluates: the body's if
+    it exists, else the newest existing one named in its author's replies."""
+    parsed = {i["number"]: parse_issue(i["title"], i.get("body") or "", POLICY_START) for i in issues}
+    ids = repo_ids(s.repo for s in parsed.values() if s.repo)
+    result = {}
+    for i in issues:
+        result[i["number"]] = ids.get(parsed[i["number"]].repo)
+        if result[i["number"]] is None:  # missing or gone in the body
+            replies = [c["body"] for c in paged(f"/repos/{REPO}/issues/{i['number']}/comments")
+                       if c["user"]["login"] == i["user"]["login"]]
+            reply_repos = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies).reply_repos
+            result[i["number"]] = next(filter(None, repo_ids(reply_repos).values()), None)  # newest first
+    return result
 
 
 def fetch_repo(slug: str) -> RepoInfo | None:
@@ -621,6 +653,7 @@ def fetch_repo(slug: str) -> RepoInfo | None:
         about=d.get("description") or "",
         homepage=d.get("homepage") or "",
         language=d.get("language") or "",
+        id=d["id"],
     )
 
 
@@ -695,20 +728,6 @@ def normalized(issue: dict) -> dict:
     if bot_comment(comments)[1] == "closed" or reopened_since_triage(comments, paged(f"/repos/{REPO}/issues/{n}/events")):
         return {**issue, "labels": [{"name": name} for name in sorted(names - ACTIVE_STATES)]}
     return issue
-
-
-def with_aliases(listed: dict[str, str], full_name: str) -> dict[str, str]:
-    """Listed repositories, plus `full_name` when a listed slug now resolves to it: a transfer
-    (same repository name) or a rename (same owner) the weekly metadata refresh hasn't recorded
-    yet. Only slugs sharing the owner or the name are resolved, usually a handful at most."""
-    target = full_name.lower()
-    owner, name = target.split("/")
-    for slug, label in list(listed.items()):
-        slug_owner, slug_name = slug.split("/")
-        if slug != target and (slug_owner == owner or slug_name == name) \
-                and (canonical_repo(slug) or "").lower() == target:
-            listed[target] = label
-    return listed
 
 
 def blocking_suggestions(number: int, active: bool, open_suggestions: list[dict]) -> list[int]:
@@ -802,8 +821,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
         regenerate = pr
     git("fetch", "origin", DEFAULT_BRANCH)
     git("checkout", "-B", branch, f"origin/{DEFAULT_BRANCH}")
-    if entry.get("github") and entry["github"].lower() in with_aliases(listed_repos(), entry["github"]):
-        # an older entry PR merged since checkout
+    if r and listed_as(listed_repos(), r):  # an older entry PR merged since checkout
         git("checkout", "--detach", f"origin/{DEFAULT_BRANCH}")
         return LISTED
     add_entry(entry, target[0])
@@ -874,8 +892,15 @@ def ensure_labels() -> None:
 
 def triage(number: int, dry_run: bool) -> str:
     issue = api("GET", f"/repos/{REPO}/issues/{number}")
-    if issue["state"] != "open" or not is_suggestion(issue):
+    if not is_suggestion(issue):
         return f"#{number}: skipped"
+    if issue["state"] != "open":
+        # A closed suggestion keeps no queue state, whatever event this run is for: a later event
+        # may have replaced the run queued for the close.
+        left = sorted({l["name"] for l in issue["labels"]} & ACTIVE_STATES)
+        for name in left if not dry_run else []:
+            remove_label(number, name)
+        return f"#{number}: closed" + (f"; removed {', '.join(left)}" if left else "")
     author = issue["user"]["login"]
     comments = paged(f"/repos/{REPO}/issues/{number}/comments")
     s = parse_issue(issue["title"], issue.get("body") or "",
@@ -897,36 +922,15 @@ def triage(number: int, dry_run: bool) -> str:
         if r := fetch_repo(reply_repo):
             s.repo = reply_repo
             break
-    # Earlier open suggestions of the same repository, so two entry PRs never race to merge.
-    pending = {}
-    same_repo = {s.repo.lower(), r.full_name.lower()} if r else set()
-    def resolve(slug: str) -> str | None:
-        """The repository a peer's slug names, as far as it matters here: the slug if it is this
-        repository, its current name if it could be an alias (same owner or name: a rename or a
-        transfer), "" if it is clearly another repository, None if it doesn't exist. Resolving
-        unrelated peers would cost a request each, multiplied across a sweep."""
-        if slug.lower() in same_repo:
-            return slug
-        owner, name = slug.lower().split("/")
-        if any(owner == known.split("/")[0] or name == known.split("/")[1] for known in same_repo):
-            return canonical_repo(slug)
-        return ""
-
+    # The open suggestion of the same repository first in the queue, so two entry PRs never race
+    # to merge; the others close as its duplicates. One batched lookup per run keeps sweeps linear.
+    pending = None
+    peer_ids = effective_repo_ids(open_issues) if r else {}
     for i in open_issues if r else []:
-        older = parse_issue(i["title"], i.get("body") or "", POLICY_START)
-        slug = resolve(older.repo) if older.repo else None
-        if slug is None:  # missing or gone in the body; the author may have corrected it in a reply
-            replies = [c["body"] for c in paged(f"/repos/{REPO}/issues/{i['number']}/comments")
-                       if c["user"]["login"] == i["user"]["login"]]
-            older = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies)
-            slug = next(filter(None, map(resolve, older.reply_repos)), None)
-        if slug and slug.lower() in same_repo and ranks_ahead(peer := normalized(i), number, active):
-            # Keep the suggestion first in the queue (number, in triage): the others will close as its duplicates.
-            best = pending.get(r.full_name.lower())  # one key for every alias of this repository
-            if best is None or ranks_ahead(peer, *best):
-                pending[r.full_name.lower()] = (i["number"], in_triage({l["name"] for l in peer["labels"]}, False))
-    listed = with_aliases(listed_repos(), r.full_name) if r else listed_repos()
-    ctx = Context(today=date.today(), listed=listed, pending={k: v[0] for k, v in pending.items()},
+        if peer_ids[i["number"]] == r.id and ranks_ahead(peer := normalized(i), number, active):
+            if pending is None or ranks_ahead(peer, *pending):
+                pending = (i["number"], in_triage({l["name"] for l in peer["labels"]}, False))
+    ctx = Context(today=date.today(), listed=listed_repos(), pending=pending[0] if pending else None,
                   declined=declined, other_open=others,
                   insider=issue["author_association"] in INSIDERS, pick="maintainer-pick" in labels,
                   monitoring_since=since)
@@ -949,7 +953,7 @@ def triage(number: int, dry_run: bool) -> str:
         summary = f"#{number}: {d.state} (maintainer-pick changed during triage)"
     url = open_pr(number, s, r, d.target, d.message, events, ctx.pick) if d.target else None
     if url == LISTED:
-        ctx.listed = with_aliases(listed_repos(), r.full_name)  # the working tree is now at the fresh main
+        ctx.listed = listed_repos()  # the working tree is now at the fresh main
         d = decide(s, r, ctx)
     elif url == DECLINED:
         ctx.declined = standing_decline(
@@ -989,7 +993,7 @@ def dispatch_for_closed_pr(pr: dict, dry_run: bool = False) -> str:
     """When a maintainer closes an entry PR without merging, re-triage its issue in a run inside
     the issue's concurrency group; triage reads the decline from the PR itself."""
     m = re.fullmatch(r"add-entry/issue-(\d+)", pr["head"]["ref"])
-    if pr["merged"] or not m or pr["head"]["repo"]["full_name"] != REPO:
+    if pr["merged"] or not m or (pr["head"]["repo"] or {}).get("full_name") != REPO:  # null: a deleted fork
         return "PR: nothing to do"
     return dispatch_each([int(m[1])], dry_run)[0]
 
@@ -1012,16 +1016,8 @@ def targets_from_event(dry_run: bool) -> list[int]:
         print("\n".join(dispatch_each(open_suggestions(), dry_run)))
         return []
     issue = payload.get("issue") or {}
-    if event == "issues" and payload.get("action") == "closed":
-        live = api("GET", f"/repos/{REPO}/issues/{issue['number']}")  # events can arrive out of order
-        if live["state"] == "open":
-            return [issue["number"]]  # reopened meanwhile: reconcile it instead
-        if not dry_run and is_suggestion(live):
-            for name in {l["name"] for l in live["labels"]} & ACTIVE_STATES:
-                remove_label(issue["number"], name)
-        return []
-    # Any other issue event (opened, edited, reopened, labeled) re-triages: GitHub may have
-    # replaced a queued run for this issue with this one, so always reconcile the issue as a whole.
+    # Any issue event re-triages, closing included: GitHub may have replaced a queued run for this
+    # issue with this one, so always reconcile the issue as a whole, in its live state.
     if event == "issues":
         return [issue["number"]]
     # Any author reply: the event's label snapshot may predate the question this reply answers.

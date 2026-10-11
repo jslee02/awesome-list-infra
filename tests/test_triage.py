@@ -209,7 +209,9 @@ class DecideTest(unittest.TestCase):
         listed = {"o/r": "R (Control)"}
         d = triage.decide(self.attested, repo(), ctx(listed=listed))
         self.assertEqual((d.close, d.labels), (True, {"duplicate"}))
-        d = triage.decide(self.attested, repo(), ctx(pending={"o/r": 140}))  # already suggested
+        renamed = triage.decide(self.attested, repo(full_name="new/name", id=42), ctx(listed={"id:42": "R (Control)"}))
+        self.assertEqual((renamed.close, renamed.labels), (True, {"duplicate"}))  # listed under its old name
+        d = triage.decide(self.attested, repo(), ctx(pending=140))  # already suggested
         self.assertEqual((d.close, d.labels), (True, {"duplicate"}))
         self.assertIn("#140", d.message)
         self.assertTrue(triage.decide(self.attested, repo(archived=True), ctx()).close)
@@ -270,7 +272,7 @@ class ReviewRegressionTest(unittest.TestCase):
     def test_commit_lookup_failure_is_not_activity(self):
         import urllib.error
         from unittest import mock
-        meta = {"full_name": "o/r", "default_branch": "main", "created_at": "2024-01-01T00:00:00Z",
+        meta = {"id": 1, "full_name": "o/r", "default_branch": "main", "created_at": "2024-01-01T00:00:00Z",
                 "pushed_at": "2026-10-01T00:00:00Z", "stargazers_count": 1, "archived": False}
 
         def fake(code):
@@ -455,29 +457,18 @@ class InfraPortTest(unittest.TestCase):
         self.assertEqual(triage.repo_from_remote("https://github.com/o/r"), "o/r")
         self.assertEqual(triage.repo_from_remote(""), "")
 
-    def test_closing_a_suggestion_strips_state_labels(self):
-        import os
-        import tempfile
+    def test_closed_suggestion_loses_state_labels(self):
         from unittest import mock
-        payload = {"action": "closed", "issue": {"number": 7, "labels": [{"name": "monitoring"}]}}
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump(payload, f)
-        env = {"GITHUB_EVENT_NAME": "issues", "GITHUB_EVENT_PATH": f.name}
         live_closed = {"state": "closed", "labels": [{"name": "monitoring"}, {"name": "suggestion"}],
                        "user": {"type": "User"}, "title": "[Suggestion] X", "body": ""}
-        with mock.patch.dict(os.environ, env), mock.patch.object(triage, "api", return_value=live_closed) as api:
-            self.assertEqual(triage.targets_from_event(dry_run=False), [])
+        with mock.patch.object(triage, "api", return_value=live_closed) as api:
+            self.assertEqual(triage.triage(7, dry_run=False), "#7: closed; removed monitoring")
             api.assert_called_with("DELETE", f"/repos/{triage.REPO}/issues/7/labels/monitoring")
         live_bug = {"state": "closed", "labels": [{"name": "question"}, {"name": "bug"}],
                     "user": {"type": "User"}, "title": "Broken link", "body": ""}
-        with mock.patch.dict(os.environ, env), mock.patch.object(triage, "api", return_value=live_bug) as api:
-            self.assertEqual(triage.targets_from_event(dry_run=False), [])
+        with mock.patch.object(triage, "api", return_value=live_bug) as api:
+            self.assertEqual(triage.triage(7, dry_run=False), "#7: skipped")
             self.assertEqual(api.call_count, 1)  # not a suggestion: labels untouched
-        live_open = {"state": "open", "labels": [{"name": "monitoring"}]}  # reopened before this ran
-        with mock.patch.dict(os.environ, env), mock.patch.object(triage, "api", return_value=live_open) as api:
-            self.assertEqual(triage.targets_from_event(dry_run=False), [7])
-            self.assertEqual(api.call_count, 1)  # only the read
-        os.unlink(f.name)
 
 
 class QueueStateTest(unittest.TestCase):
@@ -510,17 +501,6 @@ class QueueStateTest(unittest.TestCase):
             self.assertIs(triage.normalized(untouched), untouched)  # no state label: no API calls
             paged.assert_not_called()
 
-    def test_listed_alias_after_transfer_or_rename(self):
-        from unittest import mock
-        with mock.patch.object(triage, "canonical_repo", return_value="new-owner/tool") as canonical:
-            listed = triage.with_aliases({"old-owner/tool": "Tool (Control)", "x/other": "Other"}, "new-owner/tool")
-            self.assertEqual(listed["new-owner/tool"], "Tool (Control)")
-            canonical.assert_called_once_with("old-owner/tool")  # only slugs sharing owner or name
-        with mock.patch.object(triage, "canonical_repo", return_value="org/new-name") as canonical:
-            listed = triage.with_aliases({"org/old-name": "Tool (Control)", "x/other": "Other"}, "org/new-name")
-            self.assertEqual(listed["org/new-name"], "Tool (Control)")
-            canonical.assert_called_once_with("org/old-name")
-
     def test_reopen_reconciled_by_the_marker(self):
         events = [{"event": "reopened", "created_at": "2026-06-01T00:00:00Z"}]
         stale = [{"user": self.bot, "body": "<!-- triage state=needs-review -->", "updated_at": "2026-07-01T00:00:00Z"}]
@@ -533,12 +513,13 @@ class QueueStateTest(unittest.TestCase):
         import os
         import tempfile
         from unittest import mock
-        payload = {"action": "labeled", "label": {"name": "help wanted"}, "issue": {"number": 7, "labels": []}}
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump(payload, f)
-        with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "issues", "GITHUB_EVENT_PATH": f.name}):
-            self.assertEqual(triage.targets_from_event(dry_run=True), [7])
-        os.unlink(f.name)
+        for action in ("labeled", "closed"):
+            payload = {"action": action, "label": {"name": "help wanted"}, "issue": {"number": 7, "labels": []}}
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(payload, f)
+            with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "issues", "GITHUB_EVENT_PATH": f.name}):
+                self.assertEqual(triage.targets_from_event(dry_run=True), [7])
+            os.unlink(f.name)
 
 
 class Round5Test(unittest.TestCase):
@@ -620,6 +601,51 @@ class Round11Test(unittest.TestCase):
         declined = {"number": 200, "state": "closed", "merged_at": None, "closed_at": "2026-06-01T00:00:00Z"}
         self.assertEqual(triage.standing_decline([merged, declined], [], False), 200)
         self.assertIsNone(triage.standing_decline([declined, {**merged, "number": 300}], [], False))
+
+
+class Round12Test(unittest.TestCase):
+    def test_listed_ids(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as data:
+            (Path(data) / "control.yaml").write_text(
+                "- name: Tool\n  github: old-owner/old-name\n  _meta:\n    id: 42\n", encoding="utf-8")
+            with mock.patch.object(triage, "DATA", Path(data)):
+                listed = triage.listed_repos()
+        # Transferred and renamed since the last metadata refresh: only the ID still matches.
+        self.assertEqual(triage.listed_as(listed, repo(full_name="new-owner/new-name", id=42)), "Tool (Control)")
+        self.assertIsNone(triage.listed_as(listed, repo(full_name="new-owner/new-name", id=7)))
+
+    def test_repo_ids(self):
+        from unittest import mock
+        found = {"data": {"r0": {"databaseId": 5}, "r1": None}, "errors": [{"type": "NOT_FOUND", "path": ["r1"]}]}
+        with mock.patch.object(triage, "api", return_value=found) as api:
+            self.assertEqual(triage.repo_ids(["a/b", "c/d", "a/b"]), {"a/b": 5, "c/d": None})
+            self.assertEqual(api.call_args[0][2]["variables"], {"o0": "a", "n0": "b", "o1": "c", "n1": "d"})
+        with mock.patch.object(triage, "api", return_value={"data": None, "errors": [{"type": "RATE_LIMITED"}]}):
+            self.assertRaises(RuntimeError, triage.repo_ids, ["a/b"])
+        with mock.patch.object(triage, "api") as api:
+            self.assertEqual(triage.repo_ids([]), {})
+            api.assert_not_called()
+
+    def test_peer_repository_follows_its_own_triage(self):
+        from unittest import mock
+        author = {"login": "someone"}
+        peer = {"number": 10, "title": "[Suggestion] Tool", "body": "A tool without a link", "user": author}
+        replies = [{"user": author, "body": "It is github.com/a/current"},
+                   {"user": author, "body": "Sorry, it moved to github.com/b/new"}]
+        known = {"a/current": 1, "b/new": 2}
+        with mock.patch.object(triage, "paged", return_value=replies), \
+                mock.patch.object(triage, "repo_ids", side_effect=lambda slugs: {x: known.get(x) for x in slugs}):
+            self.assertEqual(triage.effective_repo_ids([peer]), {10: 2})  # the newest reply wins
+            del known["b/new"]
+            self.assertEqual(triage.effective_repo_ids([peer]), {10: 1})  # unless it doesn't exist
+            in_body = {**peer, "body": "https://github.com/a/current"}
+            self.assertEqual(triage.effective_repo_ids([in_body]), {10: 1})
+
+    def test_closed_pr_from_a_deleted_fork(self):
+        pr = {"merged": False, "number": 200, "head": {"ref": "add-entry/issue-160", "repo": None}}
+        self.assertEqual(triage.dispatch_for_closed_pr(pr), "PR: nothing to do")
 
 
 if __name__ == "__main__":

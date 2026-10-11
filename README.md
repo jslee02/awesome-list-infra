@@ -199,14 +199,14 @@ permissions:
   issues: write
   pull-requests: write
 
-concurrency:
-  group: triage-${{ github.event.issue.number || inputs.issue_number || github.event.pull_request.number || github.run_id }}
-
 jobs:
   triage:
     if: >-
       github.event_name != 'issue_comment' ||
       (!github.event.issue.pull_request && github.event.comment.user.login == github.event.issue.user.login)
+    # Job-level, so runs skipped by the condition above never replace a queued run.
+    concurrency:
+      group: triage-${{ github.event.issue.number || inputs.issue_number || github.event.pull_request.number || github.run_id }}
     uses: jslee02/awesome-list-infra/.github/workflows/triage-suggestions.yml@main
     secrets:
       CREATE_PR_TOKEN: ${{ secrets.CREATE_PR_TOKEN }}

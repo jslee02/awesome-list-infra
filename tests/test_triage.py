@@ -462,3 +462,47 @@ class InfraPortTest(unittest.TestCase):
             self.assertEqual(triage.targets_from_event(dry_run=False), [])
             api.assert_called_once_with("DELETE", f"/repos/{triage.REPO}/issues/7/labels/monitoring")
         os.unlink(f.name)
+
+
+class QueueStateTest(unittest.TestCase):
+    bot = {"type": "Bot"}
+
+    def test_reopened_since_triage(self):
+        comments = [{"user": self.bot, "body": "<!-- triage state=monitoring since=2026-01-01 -->", "updated_at": "2026-05-01T00:00:00Z"}]
+        self.assertTrue(triage.reopened_since_triage(comments, [{"event": "reopened", "created_at": "2026-06-01T00:00:00Z"}]))
+        self.assertFalse(triage.reopened_since_triage(comments, [{"event": "reopened", "created_at": "2026-04-01T00:00:00Z"}]))
+        self.assertFalse(triage.in_triage({"monitoring"}, reopened=True))
+        self.assertFalse(triage.in_triage({"question", "stale"}, reopened=False))
+
+    def test_peers_lose_labels_left_from_before_a_reopen(self):
+        from unittest import mock
+        peer = {"number": 10, "labels": [{"name": "needs-review"}, {"name": "suggestion"}]}
+        history = {
+            f"/repos/{triage.REPO}/issues/10/comments": [{"user": self.bot, "body": "<!-- triage state=needs-review -->",
+                                                         "updated_at": "2026-05-01T00:00:00Z"}],
+            f"/repos/{triage.REPO}/issues/10/events": [{"event": "reopened", "created_at": "2026-06-01T00:00:00Z"}],
+        }
+        with mock.patch.object(triage, "paged", side_effect=lambda path: history[path]):
+            self.assertEqual([l["name"] for l in triage.normalized(peer)["labels"]], ["suggestion"])
+        untouched = {"number": 11, "labels": [{"name": "suggestion"}]}
+        with mock.patch.object(triage, "paged") as paged:
+            self.assertIs(triage.normalized(untouched), untouched)  # no state label: no API calls
+            paged.assert_not_called()
+
+    def test_listed_alias_after_transfer(self):
+        from unittest import mock
+        with mock.patch.object(triage, "canonical_repo", return_value="new-owner/tool") as canonical:
+            listed = triage.with_aliases({"old-owner/tool": "Tool (Control)", "x/other": "Other"}, "new-owner/tool")
+            self.assertEqual(listed["new-owner/tool"], "Tool (Control)")
+            canonical.assert_called_once_with("old-owner/tool")  # only the same-named slug
+
+    def test_any_issue_event_triages(self):
+        import os
+        import tempfile
+        from unittest import mock
+        payload = {"action": "labeled", "label": {"name": "help wanted"}, "issue": {"number": 7, "labels": []}}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(payload, f)
+        with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "issues", "GITHUB_EVENT_PATH": f.name}):
+            self.assertEqual(triage.targets_from_event(dry_run=True), [7])
+        os.unlink(f.name)

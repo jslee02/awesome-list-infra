@@ -607,6 +607,42 @@ def ranks_ahead(issue: dict, number: int, active: bool) -> bool:
     return issue["number"] != number and other < (0 if active else 1, number)
 
 
+def reopened_since_triage(comments: list[dict], events: list[dict]) -> bool:
+    """Whether the issue was reopened after the bot last triaged it."""
+    previous = bot_comment(comments)[0]
+    reopens = [e["created_at"] for e in events if e["event"] == "reopened"]
+    return bool(previous and reopens and max(reopens) > previous["updated_at"])
+
+
+def in_triage(labels: set[str], reopened: bool) -> bool:
+    """Active in the queue: a state label that is neither stale nor left from before a reopen."""
+    return bool(labels & ACTIVE_STATES) and "stale" not in labels and not reopened
+
+
+def normalized(issue: dict) -> dict:
+    """The issue with the labels the queue should see. Fetches its history only when it carries
+    an active state label, which a reopen may have left behind."""
+    names = {l["name"] for l in issue["labels"]}
+    if not in_triage(names, False):
+        return issue
+    n = issue["number"]
+    if reopened_since_triage(paged(f"/repos/{REPO}/issues/{n}/comments"), paged(f"/repos/{REPO}/issues/{n}/events")):
+        return {**issue, "labels": [{"name": name} for name in sorted(names - ACTIVE_STATES)]}
+    return issue
+
+
+def with_aliases(listed: dict[str, str], full_name: str) -> dict[str, str]:
+    """Listed repositories, plus `full_name` when a listed slug with the same repository name
+    now resolves to it (a transfer or rename the weekly metadata refresh hasn't recorded yet).
+    Only same-named slugs are resolved, usually none."""
+    name = full_name.split("/")[1].lower()
+    for slug, label in list(listed.items()):
+        if slug.split("/")[1] == name and slug != full_name.lower() \
+                and (canonical_repo(slug) or "").lower() == full_name.lower():
+            listed[full_name.lower()] = label
+    return listed
+
+
 def blocking_suggestions(number: int, active: bool, open_suggestions: list[dict]) -> list[int]:
     """The author's other open suggestions ahead of `number` in the queue."""
     return [i["number"] for i in open_suggestions if ranks_ahead(i, number, active)]
@@ -682,7 +718,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
         pr = existing[0]
         if marker in (pr["body"] or ""):
             return pr["html_url"]  # still matches the suggestion
-        commits = api("GET", f"/repos/{REPO}/pulls/{pr['number']}/commits")
+        commits = paged(f"/repos/{REPO}/pulls/{pr['number']}/commits")
         if not bot_only(commits):
             flag_outdated(pr, number, marker, "this PR has maintainer edits, so it was not regenerated")
             return pr["html_url"]
@@ -774,33 +810,32 @@ def triage(number: int, dry_run: bool) -> str:
     entry_prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:add-entry/issue-{number}")
     declined = None if any(pr["state"] == "open" or pr["merged_at"] for pr in entry_prs) \
         else next((pr["number"] for pr in entry_prs), None)
-    reopens = [e["created_at"] for e in paged(f"/repos/{REPO}/issues/{number}/events") if e["event"] == "reopened"]
-    # Reopened since the bot last triaged it: leftover labels must not give it queue priority.
-    reopened = bool(previous and reopens and max(reopens) > previous["updated_at"])
-    ranked_labels = labels - ACTIVE_STATES if reopened else labels
+    # Leftover state labels from before a reopen must not give queue priority, in this run or others.
+    active = in_triage(labels, reopened_since_triage(comments, paged(f"/repos/{REPO}/issues/{number}/events")))
     open_issues = [i for i in paged(f"/repos/{REPO}/issues?state=open") if i["number"] != number and is_suggestion(i)]
-    active = bool(ranked_labels & ACTIVE_STATES) and "stale" not in ranked_labels
-    others = blocking_suggestions(number, active, [i for i in open_issues if i["user"]["login"] == author])
-    # Older open suggestions of the same repository, so two entry PRs never race to merge.
-    pending = {}
-    for i in open_issues:
-        if not ranks_ahead(i, number, active):  # same order as the one-open rule
-            continue
-        older = parse_issue(i["title"], i.get("body") or "", POLICY_START)
-        slug = canonical_repo(older.repo) if older.repo else None
-        if not slug:  # missing or wrong in the body; the author may have corrected it in a reply
-            replies = [c["body"] for c in paged(f"/repos/{REPO}/issues/{i['number']}/comments")
-                       if c["user"]["login"] == i["user"]["login"]]
-            older = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies)
-            slug = next(filter(None, map(canonical_repo, older.reply_repos)), None)
-        if slug:
-            pending.setdefault(slug.lower(), i["number"])
+    others = blocking_suggestions(number, active, [normalized(i) for i in open_issues if i["user"]["login"] == author])
     r = fetch_repo(s.repo) if s.repo else None
     for reply_repo in s.reply_repos if r is None else []:  # the author corrected the repository
         if r := fetch_repo(reply_repo):
             s.repo = reply_repo
             break
-    ctx = Context(today=date.today(), listed=listed_repos(), pending=pending, declined=declined, other_open=others,
+    # Earlier open suggestions of the same repository, so two entry PRs never race to merge.
+    pending = {}
+    same_repo = {s.repo.lower(), r.full_name.lower()} if r else set()
+    for i in open_issues if r else []:
+        older = parse_issue(i["title"], i.get("body") or "", POLICY_START)
+        slug = older.repo
+        if slug and slug.lower() not in same_repo:
+            slug = canonical_repo(slug)  # renamed, transferred, or gone
+        if not slug:  # missing or wrong in the body; the author may have corrected it in a reply
+            replies = [c["body"] for c in paged(f"/repos/{REPO}/issues/{i['number']}/comments")
+                       if c["user"]["login"] == i["user"]["login"]]
+            older = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies)
+            slug = next(filter(None, map(canonical_repo, older.reply_repos)), None)
+        if slug and slug.lower() in same_repo and ranks_ahead(normalized(i), number, active):
+            pending.setdefault(slug.lower(), i["number"])
+    listed = with_aliases(listed_repos(), r.full_name) if r else listed_repos()
+    ctx = Context(today=date.today(), listed=listed, pending=pending, declined=declined, other_open=others,
                   insider=issue["author_association"] in INSIDERS, pick="maintainer-pick" in labels,
                   monitoring_since=since)
     d = decide(s, r, ctx)
@@ -865,8 +900,9 @@ def targets_from_event(dry_run: bool) -> list[int]:
             for name in {l["name"] for l in issue.get("labels", [])} & ACTIVE_STATES:
                 remove_label(issue["number"], name)
         return []
-    if event == "issues" and (payload.get("action") in ("opened", "edited", "reopened")
-                              or payload.get("label", {}).get("name") == "maintainer-pick"):
+    # Any other issue event (opened, edited, reopened, labeled) re-triages: GitHub may have
+    # replaced a queued run for this issue with this one, so always reconcile the issue as a whole.
+    if event == "issues":
         return [issue["number"]]
     # Any author reply: the event's label snapshot may predate the question this reply answers.
     if event == "issue_comment" and "pull_request" not in issue and payload["comment"]["user"]["login"] == issue["user"]["login"]:

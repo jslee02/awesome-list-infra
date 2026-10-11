@@ -160,6 +160,68 @@ maintenance updates can still open resource or metadata PRs. PRs from owners,
 members, and collaborators are always skipped, so maintainers can add entries
 directly.
 
+### Triage Suggestions
+
+Applies an acceptance bar to `Suggest a Resource` issues and opens entry PRs.
+Currently used by awesome-robotics-libraries, whose `CONTRIBUTING.md` documents
+the policy: gates on repository age, stars, outside issue/PR authors, recent
+commits, and license; a 1,000-star fast lane; a monitoring pod for near misses;
+one open suggestion per person; human confirmation and affiliation.
+
+The list provides its categories through the `SECTIONS` registry of its README
+generator (`(key, title, ...)` tuples, with `data/<key>.yaml` files), and its own
+generator and validator scripts. Duplicate checks match repositories by GitHub
+ID, so a listed entry's `_meta.id` (recorded by the list's metadata refresh)
+still matches after the repository is renamed or transferred. The caller owns the triggers and a per-issue
+concurrency group, so sweeps (which dispatch one run per issue) never race
+event-driven runs for the same issue:
+
+```yaml
+name: Triage Suggestions
+
+on:
+  issues:
+    types: [opened, edited, reopened, labeled, unlabeled, closed]
+  issue_comment:
+    types: [created, edited, deleted]
+  pull_request_target:
+    types: [closed]
+  schedule:
+    - cron: "0 9 1 * *" # monthly re-check of monitoring issues
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue to triage (blank = every open suggestion)
+        required: false
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  triage:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (!github.event.issue.pull_request && github.event.comment.user.login == github.event.issue.user.login)
+    # Job-level, so runs skipped by the condition above never replace a queued run.
+    concurrency:
+      group: triage-${{ github.event.issue.number || inputs.issue_number || github.event.pull_request.number || github.run_id }}
+    uses: jslee02/awesome-list-infra/.github/workflows/triage-suggestions.yml@main
+    secrets:
+      CREATE_PR_TOKEN: ${{ secrets.CREATE_PR_TOKEN }}
+```
+
+To reverse a decline (an entry PR closed without merging), reopen the issue and
+add `maintainer-pick`, or reopen the entry PR and then the issue. If you pin the workflow
+to a tag or commit instead of `@main`, pass the same value as `infra-ref` so the
+installed tool matches it.
+
+Run it locally, read-only, from the list's checkout:
+`GITHUB_TOKEN=$(gh auth token) awesome-list-triage --all --dry-run`.
+
 ### Stale Author-Action Issues
 
 Use this from repositories that label suggestion issues with `question` when

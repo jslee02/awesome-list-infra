@@ -1,0 +1,6 @@
+{
+ "number": 150,
+ "title": "[Suggestion] Reachlock",
+ "created_at": "2026-09-18",
+ "body": "### Resource Name\nReachlock\n\n### URL\nhttps://github.com/shaneraphel/aletheia-reachlock\n\n### GitHub Repository\nshaneraphel/aletheia-reachlock\n\n### Category\nInverse Kinematics\n\n### Description\nTwo-link inverse kinematics and integer disk clearance. Unreachable is a refusal. Empty field is absence. Same pose and disks hash to the same digest.\n\n### Why should it be included?\nIt names two cases that sit next to IK and collision libraries: an unreachable target is a raise, not a rest pose; an empty clearance field is absence, not a touching zero. The clearance compare is integer `r²`, so a field can be cited by hash.\n\n### Must-have checklist\n- [x] Relevant to robotics\n- [x] Publicly accessible (MIT)\n- [x] Not a duplicate of an existing entry\n- [x] Has a meaningful description\n\n### Scoring checklist\n- [ ] Popularity: ≥ 50 GitHub stars\n- [x] Activity: commit within the last 2 years\n- [x] Documentation: README with run and verify commands\n- [ ] Maturity: ≥ 6 months old\n- [x] Uniqueness: integer-hashable disk clearance plus unreachable-as-refusal\n\nPer CONTRIBUTING, this is a suggestion issue. A direct resource PR would be closed automatically. Scoring is 3/5 if uniqueness is counted; popularity and maturity are not claimed."
+}

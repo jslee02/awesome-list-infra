@@ -83,6 +83,22 @@ class ApplyFixesSafetyTest(unittest.TestCase):
             self.assertEqual(data.read_text(encoding="utf-8"),
                              "- url: 'http://old.example/a'\n- url: https://new.example/b\n")
 
+    def test_flow_yaml_and_sentence_punctuation_end_a_url(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "data").mkdir()
+            data = root / "data" / "tools.yaml"
+            data.write_text("- {name: A, url: http://old.example/a, description: X}\n"
+                            "- {name: B, url: http://old.example/a,b}\n", encoding="utf-8")
+            readme = root / "README.md"
+            readme.write_text("See http://old.example/a. Also http://old.example/a.html\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual(data.read_text(encoding="utf-8"),
+                             "- {name: A, url: https://new.example/a, description: X}\n"
+                             "- {name: B, url: http://old.example/a,b}\n")
+            self.assertEqual(readme.read_text(encoding="utf-8"),
+                             "See https://new.example/a. Also http://old.example/a.html\n")
+
     def test_url_followed_by_parenthesis_is_not_a_prefix_match(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

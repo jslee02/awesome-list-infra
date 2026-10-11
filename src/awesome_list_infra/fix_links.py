@@ -53,10 +53,12 @@ def get_unfixable(report: dict, fixed_urls: set[str]) -> dict[str, list[dict]]:
     return unfixable
 
 
-# A match must end where the URL ends, so fixing ".../a" leaves ".../abc" and
-# ".../a(1)" alone. ")" and "'" can't be listed: they close Markdown links and
-# single-quoted YAML values.
-URL_CONTINUES = r"(?![A-Za-z0-9_\-.~%!$&*+,;=:@/?#(])"
+# A match must end where the URL ends, so fixing ".../a" leaves ".../abc",
+# ".../a.html", ".../a,b", and ".../a(1)" alone. ")" and quotes can't count as
+# URL characters: they close Markdown links and quoted YAML values. URLs can't
+# contain spaces, so "." or "," followed by whitespace, a closing bracket, or the
+# end is punctuation (end of a sentence, a flow-YAML separator), not URL.
+URL_CONTINUES = r"(?![A-Za-z0-9_\-~%!$&*+;=:@/?#(]|[.,](?=[^\s\]}]))"
 
 
 def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:

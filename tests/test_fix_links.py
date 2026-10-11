@@ -93,5 +93,25 @@ class ApplyFixesSafetyTest(unittest.TestCase):
                              "see http://old.example/a(1) and [A](https://new.example/a)\n")
 
 
+class ApplyFixesRobustnessTest(unittest.TestCase):
+    def test_cyclic_yaml_anchor(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "data").mkdir()
+            data = root / "data" / "tools.yaml"
+            data.write_text("cycle: &x [*x]\nurl: http://old.example/a\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertIn("url: https://new.example/a", data.read_text(encoding="utf-8"))
+
+    def test_crlf_line_endings_are_kept(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "data").mkdir()
+            data = root / "data" / "tools.yaml"
+            data.write_bytes(b"- name: A\r\n  url: http://old.example/a\r\n")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual(data.read_bytes(), b"- name: A\r\n  url: https://new.example/a\r\n")
+
+
 if __name__ == "__main__":
     unittest.main()

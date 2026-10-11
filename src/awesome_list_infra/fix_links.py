@@ -64,6 +64,17 @@ def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:
     return re.compile("(?:" + "|".join(re.escape(url) for url in sorted_urls) + ")" + URL_CONTINUES)
 
 
+def read_text(path: Path) -> str:
+    """File text with its line endings untouched (CRLF files stay CRLF)."""
+    with open(path, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def write_text(path: Path, text: str) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
 def fix_targets(root: Path) -> list[Path]:
     """Markdown plus the data and config files a generated README is built from."""
     sources = [f for glob in ("data/**/*.yaml", "data/**/*.yml", "awesome-list.yaml") for f in root.glob(glob)]
@@ -86,7 +97,12 @@ def only_strings_changed(old_text: str, new_text: str, fix) -> bool:
     except yaml.YAMLError:
         return False
 
+    seen: set[tuple[int, int]] = set()  # anchors can make the tree cyclic
+
     def same(a, b) -> bool:
+        if (id(a), id(b)) in seen:
+            return True
+        seen.add((id(a), id(b)))
         if isinstance(a, dict):
             return isinstance(b, dict) and list(a) == list(b) and all(same(a[k], b[k]) for k in a)
         if isinstance(a, list):
@@ -116,7 +132,7 @@ def unsafe_data_fixes(fixes: dict[str, str], root: Path) -> set[str]:
     for path in fix_targets(root):
         if path.suffix not in (".yaml", ".yml"):
             continue
-        content = path.read_text(encoding="utf-8")
+        content = read_text(path)
         if not corrupts(content, fixes):
             continue
         # Reject only the URLs that are unsafe on their own; if the rest still
@@ -146,7 +162,7 @@ def apply_fixes(
     # them, so a fix applied only to the README would be overwritten.
     for md_file in fix_targets(root):
 
-        content = md_file.read_text(encoding="utf-8")
+        content = read_text(md_file)
         seen: set[str] = set()
         file_fixes: list[tuple[str, str]] = []
 
@@ -160,7 +176,7 @@ def apply_fixes(
 
         new_content = pattern.sub(replace, content)
         if new_content != content:
-            md_file.write_text(new_content, encoding="utf-8")
+            write_text(md_file, new_content)
             changes[str(md_file.relative_to(root))] = file_fixes
 
     return changes

@@ -78,7 +78,6 @@ LABELS = {
     "duplicate": ("cfd3d7", "Already listed or suggested"),
     "maintainer-pick": ("5319e7", "Maintainer accepts despite the gates"),
 }
-MARKER = "<!-- triage"
 
 TITLE_TO_KEY: dict[str, str] = {}
 KEY_TO_TITLE: dict[str, str] = {}
@@ -607,11 +606,19 @@ def ranks_ahead(issue: dict, number: int, active: bool) -> bool:
     return issue["number"] != number and other < (0 if active else 1, number)
 
 
+def last_reopen(events: list[dict]) -> str:
+    return max((e["created_at"] for e in events if e["event"] == "reopened"), default="")
+
+
 def reopened_since_triage(comments: list[dict], events: list[dict]) -> bool:
-    """Whether the issue was reopened after the bot last triaged it."""
+    """Whether the issue was reopened after the bot last triaged it.
+
+    Each triage records the latest reopen it saw in its marker, so this holds even when the
+    reconciled comment text didn't change.
+    """
     previous = bot_comment(comments)[0]
-    reopens = [e["created_at"] for e in events if e["event"] == "reopened"]
-    return bool(previous and reopens and max(reopens) > previous["updated_at"])
+    seen = (m[3] or "") if previous and (m := re.match(MARKER, previous["body"])) else ""
+    return bool(previous) and last_reopen(events) > seen
 
 
 def in_triage(labels: set[str], reopened: bool) -> bool:
@@ -632,20 +639,25 @@ def normalized(issue: dict) -> dict:
 
 
 def with_aliases(listed: dict[str, str], full_name: str) -> dict[str, str]:
-    """Listed repositories, plus `full_name` when a listed slug with the same repository name
-    now resolves to it (a transfer or rename the weekly metadata refresh hasn't recorded yet).
-    Only same-named slugs are resolved, usually none."""
-    name = full_name.split("/")[1].lower()
+    """Listed repositories, plus `full_name` when a listed slug now resolves to it: a transfer
+    (same repository name) or a rename (same owner) the weekly metadata refresh hasn't recorded
+    yet. Only slugs sharing the owner or the name are resolved, usually a handful at most."""
+    target = full_name.lower()
+    owner, name = target.split("/")
     for slug, label in list(listed.items()):
-        if slug.split("/")[1] == name and slug != full_name.lower() \
-                and (canonical_repo(slug) or "").lower() == full_name.lower():
-            listed[full_name.lower()] = label
+        slug_owner, slug_name = slug.split("/")
+        if slug != target and (slug_owner == owner or slug_name == name) \
+                and (canonical_repo(slug) or "").lower() == target:
+            listed[target] = label
     return listed
 
 
 def blocking_suggestions(number: int, active: bool, open_suggestions: list[dict]) -> list[int]:
     """The author's other open suggestions ahead of `number` in the queue."""
     return [i["number"] for i in open_suggestions if ranks_ahead(i, number, active)]
+
+
+MARKER = r"<!-- triage state=(\S+)(?: since=(\S+))?(?: reopen=(\S+))? -->"
 
 
 def bot_comment(comments: list[dict]) -> tuple[dict | None, str, date | None]:
@@ -656,7 +668,7 @@ def bot_comment(comments: list[dict]) -> tuple[dict | None, str, date | None]:
     """
     latest, state, first = None, "", None
     for c in comments:
-        if c["user"]["type"] == "Bot" and (m := re.match(r"<!-- triage state=(\S+)(?: since=(\S+))? -->", c["body"])):
+        if c["user"]["type"] == "Bot" and (m := re.match(MARKER, c["body"])):
             latest, state = c, m[1]
             if m[1] == "monitoring" and m[2]:
                 first = min(first or date.max, date.fromisoformat(m[2]))
@@ -725,7 +737,8 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
         regenerate = pr
     git("fetch", "origin", DEFAULT_BRANCH)
     git("checkout", "-B", branch, f"origin/{DEFAULT_BRANCH}")
-    if entry.get("github", "").lower() in listed_repos():  # an older entry PR merged since checkout
+    if entry.get("github") and entry["github"].lower() in with_aliases(listed_repos(), entry["github"]):
+        # an older entry PR merged since checkout
         git("checkout", "--detach", f"origin/{DEFAULT_BRANCH}")
         return LISTED
     add_entry(entry, target[0])
@@ -811,7 +824,8 @@ def triage(number: int, dry_run: bool) -> str:
     declined = None if any(pr["state"] == "open" or pr["merged_at"] for pr in entry_prs) \
         else next((pr["number"] for pr in entry_prs), None)
     # Leftover state labels from before a reopen must not give queue priority, in this run or others.
-    active = in_triage(labels, reopened_since_triage(comments, paged(f"/repos/{REPO}/issues/{number}/events")))
+    events = paged(f"/repos/{REPO}/issues/{number}/events")
+    active = in_triage(labels, reopened_since_triage(comments, events))
     open_issues = [i for i in paged(f"/repos/{REPO}/issues?state=open") if i["number"] != number and is_suggestion(i)]
     others = blocking_suggestions(number, active, [normalized(i) for i in open_issues if i["user"]["login"] == author])
     r = fetch_repo(s.repo) if s.repo else None
@@ -851,7 +865,8 @@ def triage(number: int, dry_run: bool) -> str:
         for pr in (pr for pr in entry_prs if pr["state"] == "open"):
             flag_outdated(pr, number, f"{d.state}:{hashlib.sha256(d.message.encode()).hexdigest()[:12]}",
                           f"it is now '{d.state}' without an entry")
-    marker = f"<!-- triage state={d.state}" + (f" since={ctx.monitoring_since or ctx.today}" if d.state == "monitoring" else "") + " -->"
+    marker = (f"<!-- triage state={d.state}" + (f" since={ctx.monitoring_since or ctx.today}" if d.state == "monitoring" else "")
+              + (f" reopen={reopen}" if (reopen := last_reopen(events)) else "") + " -->")
     text = f"{marker}\n{d.message}"
     if previous and previous_state == d.state:
         if previous["body"] != text:

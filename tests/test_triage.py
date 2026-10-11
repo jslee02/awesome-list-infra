@@ -468,9 +468,10 @@ class QueueStateTest(unittest.TestCase):
     bot = {"type": "Bot"}
 
     def test_reopened_since_triage(self):
-        comments = [{"user": self.bot, "body": "<!-- triage state=monitoring since=2026-01-01 -->", "updated_at": "2026-05-01T00:00:00Z"}]
+        comments = [{"user": self.bot, "body": "<!-- triage state=monitoring since=2026-01-01 reopen=2026-05-01T00:00:00Z -->"}]
         self.assertTrue(triage.reopened_since_triage(comments, [{"event": "reopened", "created_at": "2026-06-01T00:00:00Z"}]))
-        self.assertFalse(triage.reopened_since_triage(comments, [{"event": "reopened", "created_at": "2026-04-01T00:00:00Z"}]))
+        self.assertFalse(triage.reopened_since_triage(comments, [{"event": "reopened", "created_at": "2026-05-01T00:00:00Z"}]))
+        self.assertEqual(triage.bot_comment(comments)[2], date(2026, 1, 1))  # since still parses
         self.assertFalse(triage.in_triage({"monitoring"}, reopened=True))
         self.assertFalse(triage.in_triage({"question", "stale"}, reopened=False))
 
@@ -489,12 +490,24 @@ class QueueStateTest(unittest.TestCase):
             self.assertIs(triage.normalized(untouched), untouched)  # no state label: no API calls
             paged.assert_not_called()
 
-    def test_listed_alias_after_transfer(self):
+    def test_listed_alias_after_transfer_or_rename(self):
         from unittest import mock
         with mock.patch.object(triage, "canonical_repo", return_value="new-owner/tool") as canonical:
             listed = triage.with_aliases({"old-owner/tool": "Tool (Control)", "x/other": "Other"}, "new-owner/tool")
             self.assertEqual(listed["new-owner/tool"], "Tool (Control)")
-            canonical.assert_called_once_with("old-owner/tool")  # only the same-named slug
+            canonical.assert_called_once_with("old-owner/tool")  # only slugs sharing owner or name
+        with mock.patch.object(triage, "canonical_repo", return_value="org/new-name") as canonical:
+            listed = triage.with_aliases({"org/old-name": "Tool (Control)", "x/other": "Other"}, "org/new-name")
+            self.assertEqual(listed["org/new-name"], "Tool (Control)")
+            canonical.assert_called_once_with("org/old-name")
+
+    def test_reopen_reconciled_by_the_marker(self):
+        events = [{"event": "reopened", "created_at": "2026-06-01T00:00:00Z"}]
+        stale = [{"user": self.bot, "body": "<!-- triage state=needs-review -->", "updated_at": "2026-07-01T00:00:00Z"}]
+        fresh = [{"user": self.bot, "body": "<!-- triage state=needs-review reopen=2026-06-01T00:00:00Z -->",
+                  "updated_at": "2026-05-01T00:00:00Z"}]
+        self.assertTrue(triage.reopened_since_triage(stale, events))  # never recorded that reopen
+        self.assertFalse(triage.reopened_since_triage(fresh, events))
 
     def test_any_issue_event_triages(self):
         import os

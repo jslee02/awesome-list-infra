@@ -236,7 +236,7 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
     affiliation = fields.get("affiliation") or kv.get("affiliation") or next(
         (m[1] for c in replies if (m := re.search(r"affiliation\s*:\s*(.+)", c, re.I))), "")
     evidence = fields.get("evidence of use") or ("" if is_form else split_evidence(body)[1]) or reply_evidence
-    title_name = re.sub(r"^\s*(\[suggestion\]|suggest(ion)?:?|add)\s*", "", title or "", flags=re.I)
+    title_name = re.sub(r"^\s*(\[suggestion\]|(suggest(ion)?|add)\b:?)\s*", "", title or "", flags=re.I)
     return Suggestion(
         # Names never need URLs; dropping them keeps URL-form closing references out of commits.
         name=clean_text(re.sub(r"\S*://\S*", "", fields.get("resource name") or kv.get("name")
@@ -348,6 +348,11 @@ def already_listed(listed: str) -> Decision:
                     "edit its `data/*.yaml` file in a PR.", {"duplicate"}, close=True)
 
 
+def unknown_category(s: Suggestion) -> str:
+    return (f"The category ({clean_text(s.category, 40) or 'none'}) needs a maintainer: set the **Category** "
+            "field in the issue and I'll open the PR.")
+
+
 def already_suggested(number: int) -> Decision:
     return Decision("closed", f"Thanks! This is already suggested in #{number}; please follow that issue.",
                     {"duplicate"}, close=True)
@@ -388,8 +393,11 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
                 return already_listed(listed)
             if ctx.pending:
                 return already_suggested(ctx.pending)
-            if ctx.pick and target:
-                return Decision("needs-review", "Maintainer pick: opening a PR for review.", {"needs-review"}, target=target)
+            if ctx.pick:
+                if target:
+                    return Decision("needs-review", "Maintainer pick: opening a PR for review.", {"needs-review"},
+                                    target=target)
+                return Decision("needs-review", f"Maintainer pick. {unknown_category(s)}", {"needs-review"})
             if not s.evidence and not ctx.pick:
                 return Decision("question", "This resource is not on GitHub, so a maintainer reviews it by hand, "
                                 "looking for wide use in robotics. Please add **Evidence of use** (edit the issue), "
@@ -424,10 +432,7 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
     result = "pass" if ctx.pick else outcome(r, ctx.today)
     if result == "pass":
         if target is None:
-            category = clean_text(s.category, 40) or "none"
-            return Decision("needs-review", f"Passes the {bar}:\n\n{table}\n\nThe category ({category}) "
-                            "needs a maintainer: set the **Category** field in the issue and I'll open the PR.",
-                            {"needs-review"})
+            return Decision("needs-review", f"Passes the {bar}:\n\n{table}\n\n{unknown_category(s)}", {"needs-review"})
         intro = "Maintainer pick" if ctx.pick and outcome(r, ctx.today) != "pass" else f"Passes the {bar}"
         return Decision("needs-review", f"{intro}. I'm opening a PR adding it to **{KEY_TO_TITLE[target[0]]}**; "
                         f"a maintainer will check scope and category there.\n\n{table}", {"needs-review"}, target=target)
@@ -965,6 +970,12 @@ def triage(number: int, dry_run: bool) -> str:
         left = sorted({l["name"] for l in issue["labels"]} & ACTIVE_STATES)
         for name in left if not dry_run else []:
             remove_label(number, name)
+        # Closed by a person with its entry PR still open: flag the PR, which the author can't close.
+        # (The bot flags open entry PRs itself when it closes a suggestion.)
+        open_prs = api("GET", f"/repos/{REPO}/pulls?state=open&head={REPO.split('/')[0]}:add-entry/issue-{number}")
+        if open_prs and not dry_run and bot_comment(paged(f"/repos/{REPO}/issues/{number}/comments"))[1] != "closed":
+            for pr in open_prs:
+                flag_outdated(pr, number, "closed", "the suggestion was closed")
         return f"#{number}: closed" + (f"; removed {', '.join(left)}" if left else "")
     author = issue["user"]["login"]
     comments = paged(f"/repos/{REPO}/issues/{number}/comments")
@@ -1025,11 +1036,14 @@ def triage(number: int, dry_run: bool) -> str:
             ctx.pending = other
             d = decide(s, r, ctx)
     if d.close and (ctx.pending or ctx.other_open):
-        # A blocking suggestion may have closed during the lookups; never close this one in its favor.
-        still_open = {n: api("GET", f"/repos/{REPO}/issues/{n}")["state"] == "open"
-                      for n in {ctx.pending, *ctx.other_open} - {None}}
-        ctx.pending = ctx.pending if still_open.get(ctx.pending) else None
-        ctx.other_open = [n for n in ctx.other_open if still_open[n]]
+        # The blocking suggestions may have changed during the lookups (closed, relabeled, or edited
+        # to another resource): never close this one in favor of a stale view of them.
+        live = {n: normalized(i) for n in {ctx.pending, *ctx.other_open} - {None}
+                if (i := api("GET", f"/repos/{REPO}/issues/{n}"))["state"] == "open" and is_suggestion(i)}
+        ctx.other_open = blocking_suggestions(number, active, [live[n] for n in ctx.other_open if n in live])
+        if ctx.pending not in live or not ranks_ahead(live[ctx.pending], number, active) \
+                or not keys & peer_keys([live[ctx.pending]])[ctx.pending]:
+            ctx.pending = None
         d = decide(s, r, ctx)
     url = open_pr(number, s, r, d.target, d.message, events, ctx.pick) if d.target else None
     if url == LISTED:

@@ -467,9 +467,16 @@ class InfraPortTest(unittest.TestCase):
         from unittest import mock
         live_closed = {"state": "closed", "labels": [{"name": "monitoring"}, {"name": "suggestion"}],
                        "user": {"type": "User"}, "title": "[Suggestion] X", "body": ""}
-        with mock.patch.object(triage, "api", return_value=live_closed) as api:
-            self.assertEqual(triage.triage(7, dry_run=False), "#7: closed; removed monitoring")
-            api.assert_called_with("DELETE", f"/repos/{triage.REPO}/issues/7/labels/monitoring")
+        entry_pr = {"number": 70}
+        for prs, closed_by_bot, flagged in (([], False, False), ([entry_pr], False, True), ([entry_pr], True, False)):
+            api = mock.Mock(side_effect=lambda method, path, *a, **k: prs if "/pulls" in path else live_closed)
+            comments = [{"user": {"type": "Bot"}, "body": "<!-- triage state=closed -->"}] if closed_by_bot else []
+            with mock.patch.object(triage, "api", api), mock.patch.object(triage, "paged", return_value=comments), \
+                    mock.patch.object(triage, "flag_outdated") as flag:
+                self.assertEqual(triage.triage(7, dry_run=False), "#7: closed; removed monitoring")
+                api.assert_any_call("DELETE", f"/repos/{triage.REPO}/issues/7/labels/monitoring")
+                # A person closed it with its entry PR open: flag the PR (the bot flags its own closes).
+                self.assertEqual(flag.called, flagged)
         live_bug = {"state": "closed", "labels": [{"name": "question"}, {"name": "bug"}],
                     "user": {"type": "User"}, "title": "Broken link", "body": ""}
         with mock.patch.object(triage, "api", return_value=live_bug) as api:
@@ -687,6 +694,19 @@ class Round12Test(unittest.TestCase):
             d = triage.decide(s, None, ctx(pick=pick))
             self.assertEqual((d.state, d.target), ("question", None))
             self.assertIn("couldn't use the link", d.message)
+
+    def test_title_commands_are_whole_words(self):
+        self.assertEqual(triage.parse_issue("Addison", "", TODAY).name, "Addison")
+        self.assertEqual(triage.parse_issue("Add Addison", "", TODAY).name, "Addison")
+        self.assertEqual(triage.parse_issue("Suggestion: Tool", "", TODAY).name, "Tool")
+
+    def test_pick_without_a_known_category_asks_for_one(self):
+        d = json.loads((FIXTURES / "issue-105.json").read_text(encoding="utf-8"))  # not on GitHub
+        s = triage.parse_issue(d["title"], d["body"], date.fromisoformat(d["created_at"]))
+        s.category = "Robot Platform"
+        decision = triage.decide(s, None, ctx(pick=True))
+        self.assertEqual((decision.state, decision.target), ("needs-review", None))
+        self.assertIn("set the **Category** field", decision.message)
 
     def test_github_links_in_any_case(self):
         self.assertEqual(triage.repo_in_field("HTTPS://GitHub.com/o/r"), "o/r")

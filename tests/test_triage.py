@@ -257,9 +257,6 @@ class EntryTest(unittest.TestCase):
         self.assertTrue(any("differs" in f for f in flags))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ReviewRegressionTest(unittest.TestCase):
     """Cases from code review of the pipeline."""
@@ -597,3 +594,19 @@ class Round9Test(unittest.TestCase):
     def test_prose_starting_with_evidence_is_kept(self):
         body = "Evidence-based motion planner: https://github.com/o/r"
         self.assertEqual(triage.parse_issue("[Suggestion] Planner", body, TODAY).repo, "o/r")
+
+
+class Round10Test(unittest.TestCase):
+    def test_reply_evidence_heading_is_not_a_repository(self):
+        s = triage.parse_issue("[Suggestion] SimTool", "Commercial simulator: https://simtool.example", TODAY,
+                               ["### Evidence of use\n\nhttps://github.com/acme/tutorial"])
+        self.assertEqual((s.repo, s.reply_repos), (None, []))
+        self.assertIn("acme/tutorial", s.evidence)  # and it counts as evidence
+
+    def test_split_evidence_keeps_labels_out_of_the_text(self):
+        kept, evidence = triage.split_evidence("Website: https://x.example\nEvidence: used in two courses")
+        self.assertEqual((kept, evidence), ("Website: https://x.example", "used in two courses"))
+
+
+if __name__ == "__main__":
+    unittest.main()

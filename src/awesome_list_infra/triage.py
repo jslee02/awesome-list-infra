@@ -149,18 +149,19 @@ def first_link(text: str) -> str:
     return m[0].rstrip(".,;:") if m else ""
 
 
-def without_evidence(text: str) -> str:
-    """Text minus evidence sections, whose links cite other projects.
+def split_evidence(text: str) -> tuple[str, str]:
+    """(project text, evidence text). Evidence links cite other projects, not the suggested one.
 
     A section starts at an explicit marker: an 'Evidence ...' heading (until a heading of the same
     or a higher level) or an 'Evidence:' field (until the next heading). Prose that merely begins
-    with the word, like 'Evidence-based planner: ...', stays.
+    with the word, like 'Evidence-based planner: ...', stays project text.
     """
-    out, skip = [], None  # skip: the heading level that ends the current evidence section
+    kept, evidence, skip = [], [], None  # skip: the heading level that ends the current section
     for line in (text or "").splitlines():
         heading = re.match(r"[ \t]*(#{1,6})[ \t]", line)
         if skip is not None:
             if not heading or len(heading[1]) > skip:
+                evidence.append(line)
                 continue
             skip = None
         if marker := re.match(r"[ \t]*(#{1,6})[ \t]*evidence\b", line, re.I):
@@ -168,8 +169,14 @@ def without_evidence(text: str) -> str:
         elif re.match(r"[ \t]*[*_]*evidence[*_]*[ \t]*:", line, re.I):
             skip = 6  # a field: until the next heading of any level
         else:
-            out.append(line)
-    return "\n".join(out)
+            kept.append(line)
+            continue
+        evidence.append(re.sub(r"^[ \t]*(#{1,6}[ \t]*|[*_]*)evidence\b[^:\n]*:?[*_]*", "", line, flags=re.I))
+    return "\n".join(kept), "\n".join(evidence).strip()
+
+
+def without_evidence(text: str) -> str:
+    return split_evidence(text)[0]
 
 
 def clean_text(text: str, limit: int) -> str:
@@ -218,16 +225,17 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
     replies = list(reversed(list(author_comments)))
     reply_repos: list[str] = []
     reply_url = ""
+    reply_evidence = ""
     for c in replies:
-        c = re.split(r"evidence\s*:", c, maxsplit=1, flags=re.I)[0]  # evidence links are not the project
+        c, ev = split_evidence(c)  # evidence links are not the project
+        reply_evidence = reply_evidence or ev
         reply_url = reply_url or first_link(c)
         for found in [repo_in_text(c), *map(repo_in_field, c.splitlines())]:
             if found and found not in reply_repos:
                 reply_repos.append(found)
     affiliation = fields.get("affiliation") or kv.get("affiliation") or next(
         (m[1] for c in replies if (m := re.search(r"affiliation\s*:\s*(.+)", c, re.I))), "")
-    evidence = fields.get("evidence of use") or next(
-        (m[1] for c in replies if (m := re.search(r"evidence\s*:\s*(.+)", c, re.I | re.S))), "")
+    evidence = fields.get("evidence of use") or reply_evidence
     title_name = re.sub(r"^\s*(\[suggestion\]|suggest(ion)?:?|add)\s*", "", title or "", flags=re.I)
     return Suggestion(
         # Names never need URLs; dropping them keeps URL-form closing references out of commits.
@@ -902,9 +910,9 @@ def triage(number: int, dry_run: bool) -> str:
             slug = next(filter(None, map(canonical_repo, older.reply_repos)), None)
         if slug and slug.lower() in same_repo and ranks_ahead(peer := normalized(i), number, active):
             # Keep the suggestion first in the queue (number, in triage): the others will close as its duplicates.
-            best = pending.get(slug.lower())
+            best = pending.get(r.full_name.lower())  # one key for every alias of this repository
             if best is None or ranks_ahead(peer, *best):
-                pending[slug.lower()] = (i["number"], in_triage({l["name"] for l in peer["labels"]}, False))
+                pending[r.full_name.lower()] = (i["number"], in_triage({l["name"] for l in peer["labels"]}, False))
     listed = with_aliases(listed_repos(), r.full_name) if r else listed_repos()
     ctx = Context(today=date.today(), listed=listed, pending={k: v[0] for k, v in pending.items()},
                   declined=declined, other_open=others,
@@ -914,6 +922,17 @@ def triage(number: int, dry_run: bool) -> str:
     summary = f"#{number}: {d.state}" + (f" -> PR in {d.target[0]}" if d.target else "") + f" ({s.repo or 'no repo'})"
     if dry_run:
         return summary
+    # A maintainer may have acted during the lookups above: re-read the issue before writing.
+    live = api("GET", f"/repos/{REPO}/issues/{number}")
+    if live["state"] != "open":
+        return f"#{number}: closed while triaging; left as is"
+    labels = {l["name"] for l in live["labels"]}
+    if ("maintainer-pick" in labels) != ctx.pick:
+        ctx.pick = "maintainer-pick" in labels
+        events = paged(f"/repos/{REPO}/issues/{number}/events")  # includes the new label event
+        ctx.declined = standing_decline(entry_prs, events, ctx.pick)
+        d = decide(s, r, ctx)
+        summary = f"#{number}: {d.state} (maintainer-pick changed during triage)"
     url = open_pr(number, s, r, d.target, d.message, events, ctx.pick) if d.target else None
     if url == LISTED:
         ctx.listed = with_aliases(listed_repos(), r.full_name)  # the working tree is now at the fresh main

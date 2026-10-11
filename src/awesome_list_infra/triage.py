@@ -481,8 +481,9 @@ def pick_description(submitted: str, about: str) -> tuple[str, bool]:
     if len(s) > 99:
         s = s[:99].rsplit(" ", 1)[0]
         # Never end on a word that needs a continuation ("... rejection for."), even before
-        # punctuation ("for,"); a hyphenated word such as "built-in" is a whole word.
-        while (t := re.sub(r"\s+(?:a|an|the|and|or|of|for|to|in|on|at|by|with|from|as|via|into)$", "",
+        # punctuation ("for,"); a hyphenated word such as "built-in" is a whole word. Words that
+        # can complete a phrasal verb ("can build on", "plug in") stay, so meaning is kept.
+        while (t := re.sub(r"\s+(?:a|an|the|and|or|of|for|to|at|from|as|via|into)$", "",
                            s.rstrip(",;:-–— "), flags=re.I)) != s:
             s = t
     return (s + ".", True) if s else ("", True)

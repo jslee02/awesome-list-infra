@@ -256,6 +256,9 @@ class EntryTest(unittest.TestCase):
                          ("Planner " * 10 + "Rapid built-in.", True))  # hyphenated words stay whole
         self.assertEqual(triage.pick_description(filler + "made for, and with, everyone", ""),
                          (filler.rstrip() + " made.", True))  # dangling words before punctuation go too
+        filler = "Planner " * 7 + "Fast "  # 61 characters, so the cut falls right after "on"
+        self.assertEqual(triage.pick_description(filler + "A foundation developers can build on top of anything", ""),
+                         (filler + "A foundation developers can build on.", True))  # phrasal verbs keep their meaning
         self.assertEqual(triage.pick_description("Too short", "Time-indexed storage for robotics data."),
                          ("Time-indexed storage for robotics data.", False))
 

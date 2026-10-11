@@ -89,13 +89,13 @@ class ApplyFixesSafetyTest(unittest.TestCase):
             (root / "data").mkdir()
             data = root / "data" / "tools.yaml"
             data.write_text("- {name: A, url: http://old.example/a, description: X}\n"
-                            "- {name: B, url: http://old.example/a,b}\n", encoding="utf-8")
+                            "- {name: B, url: \"http://old.example/a,b\"}\n", encoding="utf-8")  # quoted: one scalar
             readme = root / "README.md"
             readme.write_text("See http://old.example/a. Also http://old.example/a.html\n", encoding="utf-8")
             apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
             self.assertEqual(data.read_text(encoding="utf-8"),
                              "- {name: A, url: https://new.example/a, description: X}\n"
-                             "- {name: B, url: http://old.example/a,b}\n")
+                             "- {name: B, url: \"http://old.example/a,b\"}\n")
             self.assertEqual(readme.read_text(encoding="utf-8"),
                              "See https://new.example/a. Also http://old.example/a.html\n")
 

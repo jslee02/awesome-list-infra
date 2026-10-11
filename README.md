@@ -183,7 +183,7 @@ on:
   issues:
     types: [opened, edited, reopened, labeled, unlabeled, closed]
   issue_comment:
-    types: [created]
+    types: [created, edited, deleted]
   pull_request_target:
     types: [closed]
   schedule:

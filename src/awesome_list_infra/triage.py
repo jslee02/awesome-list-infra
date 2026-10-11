@@ -339,6 +339,11 @@ class Context:
     monitoring_since: date | None = None
 
 
+def already_listed(listed: str) -> Decision:
+    return Decision("closed", f"Thanks! This is already listed as **{listed}**. To change that entry, "
+                    "edit its `data/*.yaml` file in a PR.", {"duplicate"}, close=True)
+
+
 BAR = "[acceptance bar](https://github.com/{repo}/blob/main/CONTRIBUTING.md#acceptance-bar)"
 
 
@@ -369,6 +374,9 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
     target = category_target(s.category)
     if s.repo is None:
         if s.alt_repo or s.url:
+            same = entry_keys(build_entry(s, None, None)[0])
+            if listed := next((ctx.listed[k] for k in same if k in ctx.listed), None):
+                return already_listed(listed)
             if ctx.pick and target:
                 return Decision("needs-review", "Maintainer pick: opening a PR for review.", {"needs-review"}, target=target)
             if not s.evidence and not ctx.pick:
@@ -385,8 +393,7 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
         return Decision("question", f"I couldn't find `github.com/{s.repo}`. Please fix the **GitHub Repository** "
                         "field (edit the issue) or reply with the right `owner/repo`.", {"question"})
     if listed := listed_as(ctx.listed, r, s.repo):
-        return Decision("closed", f"Thanks! This is already listed as **{listed}**. To change that "
-                        "entry, edit its `data/*.yaml` file in a PR.", {"duplicate"}, close=True)
+        return already_listed(listed)
     if ctx.pending:
         return Decision("closed", f"Thanks! This repository is already suggested in #{ctx.pending}; "
                         "please follow that issue.", {"duplicate"}, close=True)
@@ -499,18 +506,26 @@ def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None) -> tu
     return entry, flags
 
 
+def entry_keys(e: dict) -> set[str]:
+    """How an entry is identified: by GitHub ID (`_meta.id`, which the list's metadata refresh
+    records), else by owner/repo, else, for a resource not on GitHub, by its source and website.
+    A known ID decides alone: after a move, another repository may take the old name."""
+    if repo_id := (e.get("_meta") or {}).get("id"):
+        return {f"id:{repo_id}"}
+    if e.get("github"):
+        return {e["github"].lower()}
+    urls = [e.get("url"), e.get("code_url"), e.get("gitlab") and f"https://gitlab.com/{e['gitlab']}",
+            e.get("bitbucket") and f"https://bitbucket.org/{e['bitbucket']}"]
+    return {"url:" + re.sub(r"^https?://(www\.)?", "", u.lower()).rstrip("/") for u in urls if u}
+
+
 def listed_repos() -> dict[str, str]:
-    """"Name (Category)" of listed repositories, by "id:<GitHub ID>" (`_meta.id`, which the list's
-    metadata refresh records), else by lowercased owner/repo. A known ID decides alone: after a
-    move, another repository may take the old name."""
+    """"Name (Category)" of listed entries, by each of their `entry_keys`."""
     listed = {}
     for key, title in KEY_TO_TITLE.items():
         path = DATA / f"{key}.yaml"
         for e in (yaml.safe_load(path.read_text(encoding="utf-8")) or []) if path.exists() else []:
-            if repo_id := (e.get("_meta") or {}).get("id"):
-                listed[f"id:{repo_id}"] = f"{e['name']} ({title})"
-            elif e.get("github"):
-                listed[e["github"].lower()] = f"{e['name']} ({title})"
+            listed |= dict.fromkeys(entry_keys(e), f"{e['name']} ({title})")
     return listed
 
 
@@ -825,7 +840,8 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
         regenerate = pr
     git("fetch", "origin", DEFAULT_BRANCH)
     git("checkout", "-B", branch, f"origin/{DEFAULT_BRANCH}")
-    if r and listed_as(listed_repos(), r):  # an older entry PR merged since checkout
+    listed = listed_repos()
+    if listed_as(listed, r) if r else entry_keys(entry) & listed.keys():  # an older entry PR merged since checkout
         git("checkout", "--detach", f"origin/{DEFAULT_BRANCH}")
         return LISTED
     add_entry(entry, target[0])
@@ -907,9 +923,8 @@ def triage(number: int, dry_run: bool) -> str:
         return f"#{number}: closed" + (f"; removed {', '.join(left)}" if left else "")
     author = issue["user"]["login"]
     comments = paged(f"/repos/{REPO}/issues/{number}/comments")
-    s = parse_issue(issue["title"], issue.get("body") or "",
-                    date.fromisoformat(issue["created_at"][:10]),
-                    [c["body"] for c in comments if c["user"]["login"] == author])
+    replies = [c["body"] for c in comments if c["user"]["login"] == author]
+    s = parse_issue(issue["title"], issue.get("body") or "", date.fromisoformat(issue["created_at"][:10]), replies)
     labels = {l["name"] for l in issue["labels"]}
     previous, previous_state, since = bot_comment(comments)
     # Lifecycle facts come from durable state, not the triggering event: GitHub replaces a
@@ -948,6 +963,8 @@ def triage(number: int, dry_run: bool) -> str:
         return f"#{number}: closed or relabeled while triaging; left as is"
     if (live["title"], live.get("body") or "") != (issue["title"], issue.get("body") or ""):
         return f"#{number}: edited while triaging; the queued run for that edit will decide"
+    if [c["body"] for c in paged(f"/repos/{REPO}/issues/{number}/comments") if c["user"]["login"] == author] != replies:
+        return f"#{number}: the author replied while triaging; the queued run for that reply will decide"
     labels = {l["name"] for l in live["labels"]}
     if ("maintainer-pick" in labels) != ctx.pick:
         ctx.pick = "maintainer-pick" in labels

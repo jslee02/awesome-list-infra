@@ -654,6 +654,19 @@ class Round12Test(unittest.TestCase):
         entry, _ = triage.build_entry(s, repo(full_name="manankharwar/fusioncore", homepage="https://github.com/o/r"), None)
         self.assertNotIn("url", entry)  # a homepage pointing back at GitHub is not a website
 
+    def test_resource_not_on_github_already_listed(self):
+        listed = {}
+        for e in [{"name": "RobWork", "url": "https://robwork.dk/", "gitlab": "sdurobotics/RobWork"},
+                  {"name": "R", "github": "o/r", "url": "https://robwork.dk/"}]:  # a GitHub entry's website isn't its identity
+            listed |= dict.fromkeys(triage.entry_keys(e), e["name"])
+        self.assertEqual(listed, {"url:robwork.dk": "RobWork", "url:gitlab.com/sdurobotics/robwork": "RobWork", "o/r": "R"})
+        form = NEW_FORM.format(box="X").replace(
+            "https://github.com/manankharwar/fusioncore", "https://www.robwork.dk").replace("manankharwar/fusioncore", "")
+        s = triage.parse_issue("[Suggestion] RobWork", form, TODAY)
+        for pick in (False, True):
+            d = triage.decide(s, None, ctx(listed=listed, pick=pick))
+            self.assertEqual((d.state, d.labels), ("closed", {"duplicate"}))
+
     def test_closed_pr_from_a_deleted_fork(self):
         pr = {"merged": False, "number": 200, "head": {"ref": "add-entry/issue-160", "repo": None}}
         self.assertEqual(triage.dispatch_for_closed_pr(pr), "PR: nothing to do")

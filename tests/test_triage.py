@@ -257,8 +257,10 @@ class EntryTest(unittest.TestCase):
         word = "x" * 98 + "y"  # a word ending exactly at 99 characters keeps its place before a comma
         self.assertEqual(triage.pick_description(word + ", and more", ""), (word + "…", True))
         self.assertEqual(triage.pick_description("z" * 150, ""), ("z" * 99 + "…", True))  # one overlong token
-        version = "x" * 89 + " ROS ver 2.0 and more"  # the cut falls inside "2.0", which goes whole
-        self.assertEqual(triage.pick_description(version, ""), ("x" * 89 + " ROS ver…", True))
+        for head, tail in (("2", ".0"), ("1", ",000"), ("https", "://example.com/docs")):
+            prefix = "x" * (90 - len(head)) + " ROS ver "  # the token's inner punctuation sits right at the cut
+            self.assertEqual(triage.pick_description(prefix + head + tail + " and more", ""),
+                             (prefix.rstrip() + "…", True))  # so the token goes whole, never "2…" or "https…"
         self.assertEqual(triage.pick_description("Too short", "Time-indexed storage for robotics data."),
                          ("Time-indexed storage for robotics data.", False))
 

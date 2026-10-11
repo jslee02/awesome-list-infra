@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -290,8 +291,11 @@ class ReviewRegressionTest(unittest.TestCase):
         with mock.patch.object(triage, "api", side_effect=fake(500)):
             with self.assertRaises(urllib.error.HTTPError):
                 triage.fetch_repo("o/r")
-        with mock.patch.object(triage, "api", side_effect=fake(409)):  # empty repository
-            self.assertEqual(triage.fetch_repo("o/r").last_commit, date(2024, 1, 1))
+        with mock.patch.object(triage, "api", side_effect=fake(409)):  # empty repository: no activity
+            empty = triage.fetch_repo("o/r")
+        self.assertIsNone(empty.last_commit)
+        self.assertEqual(triage.outcome(replace(empty, stars=5000, outside=10, license="MIT"), TODAY), "below")
+        self.assertIn("| Commit within 12 months | yes | none | ❌ |", triage.gate_table(empty, TODAY))
 
     def test_evidence_links_are_not_the_project(self):
         body = ("### Resource Name\n\nSimTool\n\n### URL\n\nhttps://simtool.example\n\n### GitHub Repository\n\n"

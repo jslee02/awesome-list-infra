@@ -276,7 +276,7 @@ class RepoInfo:
     full_name: str
     stars: int
     created: date
-    last_commit: date
+    last_commit: date | None  # None: no commit on the default branch (an empty repository)
     archived: bool
     license: str | None  # SPDX id; "NOASSERTION" when a license file is unrecognized
     outside: int  # distinct outside issue/PR authors
@@ -293,14 +293,18 @@ def gate_rows(r: RepoInfo, today: date) -> list[tuple[str, str, str, bool]]:
         ("Repository age", "6 months (none with 1,000 stars)", f"{age // 30} months", age >= MIN_AGE_DAYS or r.stars >= FAST_STARS),
         ("Stars", f"{MIN_STARS}", f"{r.stars:,}", r.stars >= MIN_STARS),
         ("Outside people", f"{MIN_OUTSIDE}", str(r.outside), r.outside >= MIN_OUTSIDE),
-        ("Commit within 12 months", "yes", r.last_commit.isoformat(), (today - r.last_commit).days <= ACTIVE_DAYS),
+        ("Commit within 12 months", "yes", r.last_commit.isoformat() if r.last_commit else "none", active(r, today)),
         ("License", "yes", r.license or "none", r.license is not None),
     ]
 
 
+def active(r: RepoInfo, today: date) -> bool:
+    return r.last_commit is not None and (today - r.last_commit).days <= ACTIVE_DAYS
+
+
 def outcome(r: RepoInfo, today: date) -> str:
     """'pass', 'monitor', or 'below' for an unarchived, unlisted repository."""
-    basics = r.license is not None and (today - r.last_commit).days <= ACTIVE_DAYS
+    basics = r.license is not None and active(r, today)
     mature = (today - r.created).days >= MIN_AGE_DAYS
     if basics and r.outside >= MIN_OUTSIDE and (r.stars >= FAST_STARS or (mature and r.stars >= MIN_STARS)):
         return "pass"
@@ -349,11 +353,11 @@ def already_suggested(number: int) -> Decision:
                     {"duplicate"}, close=True)
 
 
-BAR = "[acceptance bar](https://github.com/{repo}/blob/main/CONTRIBUTING.md#acceptance-bar)"
+BAR = "[acceptance bar](https://github.com/{repo}/blob/{branch}/CONTRIBUTING.md#acceptance-bar)"
 
 
 def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
-    bar = BAR.format(repo=REPO)
+    bar = BAR.format(repo=REPO, branch=DEFAULT_BRANCH)
     if ctx.declined:  # reopening or editing doesn't undo a maintainer's decision (see standing_decline)
         return Decision("closed", f"A maintainer declined this in #{ctx.declined}; see the reason there. If "
                         "something has changed, ask a maintainer to take another look.", close=True)
@@ -507,7 +511,9 @@ def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None) -> tu
     if subsection:
         entry["_subsection"] = subsection
     if r:
-        meta = {"id": r.id, "stars": r.stars, "last_commit": r.last_commit.isoformat()}
+        meta = {"id": r.id, "stars": r.stars}
+        if r.last_commit:
+            meta["last_commit"] = r.last_commit.isoformat()
         if r.license and r.license != "NOASSERTION":
             meta["license"] = r.license
         if r.language:
@@ -688,12 +694,12 @@ def fetch_repo(slug: str) -> RepoInfo | None:
         if e.code != 409:  # 409: empty repository, so no default-branch commit
             raise
         commit = None
-    last = (commit[0]["commit"]["committer"]["date"] if commit else d["created_at"])[:10]
+    last = date.fromisoformat(commit[0]["commit"]["committer"]["date"][:10]) if commit else None
     return RepoInfo(
         full_name=d["full_name"],
         stars=d["stargazers_count"],
         created=date.fromisoformat(d["created_at"][:10]),
-        last_commit=min(date.fromisoformat(last), date.today()),
+        last_commit=min(last, date.today()) if last else None,
         archived=d["archived"],
         license=(d.get("license") or {}).get("spdx_id") if d.get("license") else None,
         **dict(zip(("outside", "outside_complete"), outside_people(owner, name))),
@@ -854,6 +860,11 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
     entry, flags = build_entry(s, r, target[1])
     marker = entry_marker({k: v for k, v in entry.items() if k != "_meta"}, target[0])
     regenerate = None
+    git("fetch", "origin", DEFAULT_BRANCH)
+    git("checkout", "--detach", f"origin/{DEFAULT_BRANCH}")
+    listed = listed_repos()
+    if listed_as(listed, r) if r else entry_keys(entry) & listed.keys():  # another entry PR merged meanwhile
+        return LISTED
     prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:{branch}")
     if standing_decline(prs, events, pick):  # closed by a maintainer after this run read the PR list
         return DECLINED
@@ -866,12 +877,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
             flag_outdated(pr, number, marker, "this PR has maintainer edits, so it was not regenerated")
             return pr["html_url"]
         regenerate = pr
-    git("fetch", "origin", DEFAULT_BRANCH)
     git("checkout", "-B", branch, f"origin/{DEFAULT_BRANCH}")
-    listed = listed_repos()
-    if listed_as(listed, r) if r else entry_keys(entry) & listed.keys():  # an older entry PR merged since checkout
-        git("checkout", "--detach", f"origin/{DEFAULT_BRANCH}")
-        return LISTED
     add_entry(entry, target[0])
     if not validate_entries():
         raise SystemExit(f"#{number}: generated entry fails schema validation")
@@ -994,9 +1000,8 @@ def triage(number: int, dry_run: bool) -> str:
                   insider=issue["author_association"] in INSIDERS, pick="maintainer-pick" in labels,
                   monitoring_since=since)
     d = decide(s, r, ctx)
-    summary = f"#{number}: {d.state}" + (f" -> PR in {d.target[0]}" if d.target else "") + f" ({s.repo or 'no repo'})"
     if dry_run:
-        return summary
+        return f"#{number}: {d.state}" + (f" -> PR in {d.target[0]}" if d.target else "") + f" ({s.repo or 'no repo'})"
     # A maintainer may have acted during the lookups above: re-read the issue before writing.
     live = api("GET", f"/repos/{REPO}/issues/{number}")
     if live["state"] != "open" or not is_suggestion(live):
@@ -1011,7 +1016,6 @@ def triage(number: int, dry_run: bool) -> str:
         events = paged(f"/repos/{REPO}/issues/{number}/events")  # includes the new label event
         ctx.declined = standing_decline(entry_prs, events, ctx.pick)
         d = decide(s, r, ctx)
-        summary = f"#{number}: {d.state} (maintainer-pick changed during triage)"
     if d.target:
         # Another suggestion's open entry PR may already add this resource (its issue was changed
         # to it, or both were picked): defer to that one rather than open a second PR. If both
@@ -1020,6 +1024,13 @@ def triage(number: int, dry_run: bool) -> str:
         if not keys & prs.get(number, set()) and (other := min((n for n, k in prs.items() if keys & k), default=None)):
             ctx.pending = other
             d = decide(s, r, ctx)
+    if d.close and (ctx.pending or ctx.other_open):
+        # A blocking suggestion may have closed during the lookups; never close this one in its favor.
+        still_open = {n: api("GET", f"/repos/{REPO}/issues/{n}")["state"] == "open"
+                      for n in {ctx.pending, *ctx.other_open} - {None}}
+        ctx.pending = ctx.pending if still_open.get(ctx.pending) else None
+        ctx.other_open = [n for n in ctx.other_open if still_open[n]]
+        d = decide(s, r, ctx)
     url = open_pr(number, s, r, d.target, d.message, events, ctx.pick) if d.target else None
     if url == LISTED:
         ctx.listed = listed_repos()  # the working tree is now at the fresh main
@@ -1055,7 +1066,7 @@ def triage(number: int, dry_run: bool) -> str:
         api("POST", f"/repos/{REPO}/issues/{number}/comments", {"body": text})
     if d.close:
         api("PATCH", f"/repos/{REPO}/issues/{number}", {"state": "closed", "state_reason": "not_planned"})
-    return summary
+    return f"#{number}: {d.state}" + (f" -> {url}" if url else "") + f" ({s.repo or 'no repo'})"
 
 
 def dispatch_for_closed_pr(pr: dict, dry_run: bool = False) -> str:

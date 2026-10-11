@@ -555,3 +555,15 @@ class Round5Test(unittest.TestCase):
         self.assertTrue(d.close)  # below the floor on stars whatever the count
         d = triage.decide(attested, repo(outside=0, outside_complete=False), ctx())
         self.assertEqual(d.state, "needs-review")
+
+
+class Round7Test(unittest.TestCase):
+    def test_github_inside_another_url_is_not_a_repo(self):
+        self.assertIsNone(triage.repo_in_text("https://docs.example/github.com/google-deepmind/mujoco"))
+        self.assertEqual(triage.repo_in_text("[repo](https://github.com/o/r)"), "o/r")
+        self.assertEqual(triage.repo_in_text("Repo: github.com/o/r"), "o/r")
+
+    def test_website_from_an_author_reply(self):
+        s = triage.parse_issue("[Suggestion] SimTool", "A commercial simulator.", TODAY,
+                               ["It's at https://tool.example\nEvidence: https://paper.example/cites"])
+        self.assertEqual(s.url, "https://tool.example")

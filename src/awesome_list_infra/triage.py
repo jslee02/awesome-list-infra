@@ -101,7 +101,9 @@ def generator_sections(path: Path):
 # ── Parsing ─────────────────────────────────────────────────────────────────
 
 # The host must be github.com itself, not gist.github.com or notgithub.com.
-GITHUB_URL = re.compile(r"(?<![A-Za-z0-9.-])(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)")
+# The link must start a token (after whitespace, "(", "<", "[", or a quote), so github.com inside
+# another URL's path (https://docs.example/github.com/o/r) or a look-alike host doesn't count.
+GITHUB_URL = re.compile(r"""(?<![^\s(<\["'`])(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)""")
 SLUG = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$")
 NOT_OWNERS = {"orgs", "sponsors", "settings", "features", "topics", "apps", "marketplace", "user-attachments"}
 KEY_VALUE = re.compile(r"^[\s*-]*\**(name|url|github|category|description|affiliation)\**\s*:\**\s*(.+?)\s*$", re.I | re.M)
@@ -190,8 +192,10 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
     kv = {k.lower(): v for k, v in KEY_VALUE.findall(body or "")}
     replies = list(reversed(list(author_comments)))
     reply_repos: list[str] = []
+    reply_url = ""
     for c in replies:
         c = re.split(r"evidence\s*:", c, maxsplit=1, flags=re.I)[0]  # evidence links are not the project
+        reply_url = reply_url or first_link(c)
         for found in [repo_in_text(c), *map(repo_in_field, c.splitlines())]:
             if found and found not in reply_repos:
                 reply_repos.append(found)
@@ -211,7 +215,7 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
               or (None if is_form else repo_in_text(body))
               or next(iter(reply_repos), None)),
         reply_repos=reply_repos,
-        url=(fields.get("url") or kv.get("url") or ("" if is_form else first_link(body))).strip(),
+        url=(fields.get("url") or kv.get("url") or ("" if is_form else first_link(body)) or reply_url).strip(),
         category=(fields.get("category") or kv.get("category") or "").strip(),
         description=fields.get("description") or kv.get("description") or "",
         alt_repo=fields.get("alternative repository", "").strip(),
@@ -870,10 +874,14 @@ def triage(number: int, dry_run: bool) -> str:
                        if c["user"]["login"] == i["user"]["login"]]
             older = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies)
             slug = next(filter(None, map(canonical_repo, older.reply_repos)), None)
-        if slug and slug.lower() in same_repo and ranks_ahead(normalized(i), number, active):
-            pending.setdefault(slug.lower(), i["number"])
+        if slug and slug.lower() in same_repo and ranks_ahead(peer := normalized(i), number, active):
+            # Keep the suggestion first in the queue (number, in triage): the others will close as its duplicates.
+            best = pending.get(slug.lower())
+            if best is None or ranks_ahead(peer, *best):
+                pending[slug.lower()] = (i["number"], in_triage({l["name"] for l in peer["labels"]}, False))
     listed = with_aliases(listed_repos(), r.full_name) if r else listed_repos()
-    ctx = Context(today=date.today(), listed=listed, pending=pending, declined=declined, other_open=others,
+    ctx = Context(today=date.today(), listed=listed, pending={k: v[0] for k, v in pending.items()},
+                  declined=declined, other_open=others,
                   insider=issue["author_association"] in INSIDERS, pick="maintainer-pick" in labels,
                   monitoring_since=since)
     d = decide(s, r, ctx)

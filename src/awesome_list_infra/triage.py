@@ -229,11 +229,14 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
     replies = list(reversed(list(author_comments)))
     reply_repos: list[str] = []
     reply_url = ""
+    explicit_url = ""
     reply_evidence = ""
     for c in replies:
         c, ev = split_evidence(c)  # evidence links are not the project
         reply_evidence = reply_evidence or ev
         reply_url = reply_url or first_link(c)
+        if not explicit_url and (m := re.search(r"^[\s*-]*\**url\**\s*:\**\s*(\S+)", c, re.I | re.M)):
+            explicit_url = first_link(m[1])  # "URL: ..." replaces the resource's link, whatever it is
         for found in [repo_in_text(c), *map(repo_in_field, c.splitlines())]:
             if found and found not in reply_repos:
                 reply_repos.append(found)
@@ -254,7 +257,9 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
               or (None if is_form else repo_in_text(without_evidence(body)))
               or next(iter(reply_repos), None)),
         reply_repos=reply_repos,
-        url=body_url if safe_url(body_url) or not reply_url or github_repo_root(reply_url) else reply_url,
+        # A reply's link replaces an unusable one, unless it only names a repository.
+        url=(body_url if safe_url(body_url) else explicit_url or (
+            body_url if not reply_url or github_repo_root(reply_url) else reply_url)),
         category=(fields.get("category") or kv.get("category") or "").strip(),
         description=fields.get("description") or kv.get("description") or "",
         alt_repo=fields.get("alternative repository", "").strip(),
@@ -628,7 +633,7 @@ def resource_keys(e: dict, aliases=()) -> set[str]:
         return keys
     # The ID survives renames; the slug matches entries recorded before they had an ID.
     keys = {f"id:{repo_id}"} if (repo_id := (e.get("_meta") or {}).get("id")) else set()
-    return keys | ({url_key(f"https://github.com/{e['github']}")} if e.get("github") else set())
+    return keys | {url_key(f"https://github.com/{name}") for name in (e.get("github"), *aliases) if name}
 
 
 def keys_for(e: dict, category: str, aliases=()) -> set[str]:

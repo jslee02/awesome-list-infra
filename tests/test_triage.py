@@ -907,7 +907,8 @@ class ManualReviewTest(unittest.TestCase):
         paper.repo, paper.url = "old/name", "https://github.com/new/name"  # old slug, current root URL
         triage.REPO_NAMES[7] = "new/name"  # recorded by this run's lookups
         pr_entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
-        self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(pr_entry))  # {"id:7"}
+        # The PR's marker uses the submitted name as an alias too, as open_pr does.
+        self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(pr_entry, [paper.repo]))
 
     def test_an_unusable_page_link_is_asked_for_again(self):
         paper = self.paper("Cited")
@@ -961,6 +962,17 @@ class ManualReviewTest(unittest.TestCase):
         paper.repo, paper.url = "o/r", ""
         d = triage.decide(paper, repo(full_name="o/r", id=7), ctx(listed=listed))
         self.assertEqual((d.close, d.labels), (True, {"duplicate"}))
+
+    def test_an_old_name_matches_an_id_less_entry(self):
+        listed = dict.fromkeys(triage.resource_keys({"name": "P", "github": "old/name"}), "P (Papers)")
+        keys = triage.resource_keys({"name": "P", "github": "new/name", "_meta": {"id": 7}}, ["old/name"])
+        self.assertTrue(keys & listed.keys())
+
+    def test_an_explicit_url_reply_replaces_an_unusable_link(self):
+        body = NEW_FORM.format(box="X").replace(
+            "https://github.com/manankharwar/fusioncore", "https://en.wikipedia.org/wiki/Tool_(robotics)")
+        s = triage.parse_issue("[Suggestion] x", body, TODAY, ["URL: https://github.com/o/paper"])
+        self.assertEqual(s.url, "https://github.com/o/paper")
 
     def test_malformed_reply_links_dont_abort(self):
         self.assertIsNone(triage.github_repo_root("https://["))

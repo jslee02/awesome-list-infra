@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from awesome_list_infra.fix_links import apply_fixes, get_redirect_fixes, reverted_fixes
+from awesome_list_infra.fix_links import apply_fixes, generate_unfixable_report, get_redirect_fixes, reverted_fixes
 
 
 class ApplyFixesTest(unittest.TestCase):
@@ -244,9 +244,13 @@ class RedirectFixesTest(unittest.TestCase):
         }
         report = {"redirect_map": {"README.md": [
             {"origin": old, "redirects": [{"url": new, "code": 301}]} for old, new in moves.items()]}}
-        self.assertEqual(get_redirect_fixes(report), dict(list(moves.items())[:4]))
+        fixes, moved = get_redirect_fixes(report)
+        self.assertEqual(fixes, dict(list(moves.items())[:4]))
+        # Left for a person, except GitHub's sign-in wall.
+        self.assertEqual(moved, dict(list(moves.items())[5:]))
+        self.assertIn("- [ ] https://www.artiminds.com/ -> https://tpglobalfx.com/", generate_unfixable_report({}, moved))
 
     def test_older_report_shape(self):
         report = {"redirect_map": {"README.md": [{"url": "http://a.example/x", "status": {
             "redirects": {"redirects": [{"url": "https://www.a.example/x/", "code": 301}]}}}]}}
-        self.assertEqual(get_redirect_fixes(report), {"http://a.example/x": "https://www.a.example/x/"})
+        self.assertEqual(get_redirect_fixes(report), ({"http://a.example/x": "https://www.a.example/x/"}, {}))

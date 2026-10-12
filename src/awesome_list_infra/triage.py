@@ -81,23 +81,27 @@ LABELS = {
 
 TITLE_TO_KEY: dict[str, str] = {}
 KEY_TO_TITLE: dict[str, str] = {}
+MANUAL_REVIEW: set[str] = set()  # category keys a maintainer reviews by hand (papers, books, talks)
 
 
-def load_categories(sections) -> None:
-    """Use the list's categories: (key, title, ...) tuples, as in its README generator."""
+def load_categories(sections, manual_review=()) -> None:
+    """Use the list's categories: (key, title, ...) tuples, as in its README generator, and the
+    keys of those (non-software) a maintainer reviews by hand even with a GitHub repository."""
     TITLE_TO_KEY.clear()
     KEY_TO_TITLE.clear()
+    MANUAL_REVIEW.clear()
     for key, title, *_ in sections:
         TITLE_TO_KEY[title.lower()] = key
         KEY_TO_TITLE[key] = title
+    MANUAL_REVIEW.update(manual_review)
 
 
 def generator_sections(path: Path):
-    """The SECTIONS registry of the list's README generator."""
+    """The SECTIONS registry of the list's README generator and its optional MANUAL_REVIEW keys."""
     spec = importlib.util.spec_from_file_location("list_readme_generator", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.SECTIONS
+    return module.SECTIONS, getattr(module, "MANUAL_REVIEW", ())
 # ── Parsing ─────────────────────────────────────────────────────────────────
 
 # The host must be github.com itself, not gist.github.com or notgithub.com.
@@ -387,9 +391,10 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
             return Decision("question", f"{why}Before I can evaluate this suggestion, please:\n\n"
                             + "\n".join(f"- {a}" for a in asks), {"question"})
     target = category_target(s.category)
-    if s.repo is None:
-        # Judge the links the entry would actually get: unsafe ones are dropped.
-        if same := entry_keys(build_entry(s, None, None)[0]):
+    if s.repo is None or (target and target[0] in MANUAL_REVIEW):
+        # Judge the links the entry would actually get (unsafe ones are dropped), including the
+        # repository of a paper or book that has one.
+        if same := entry_keys(build_entry(s, r, None)[0]):
             if listed := next((ctx.listed[k] for k in same if k in ctx.listed), None):
                 return already_listed(listed)
             if ctx.pending:
@@ -403,13 +408,13 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
                                     {"needs-review"})
                 return Decision("needs-review", "Maintainer pick: opening a PR for review.", {"needs-review"},
                                 target=target)
-            if not s.evidence and not ctx.pick:
-                return Decision("question", "This resource is not on GitHub, so a maintainer reviews it by hand, "
-                                "looking for wide use. Please add **Evidence of use** (edit the issue), "
-                                "or reply starting with `Evidence:`, for example independent users or customers, "
-                                "citations, or third-party tutorials.", {"question"})
-            return Decision("needs-review", "This resource is not on GitHub, so a maintainer will review it by hand.",
-                            {"needs-review"})
+            how = ("This resource is not on GitHub, so a maintainer reviews it by hand" if s.repo is None
+                   else f"A maintainer reviews suggestions in **{KEY_TO_TITLE[target[0]]}** by hand")
+            if not s.evidence:
+                return Decision("question", f"{how}, looking for wide use. Please add **Evidence of use** (edit the "
+                                "issue), or reply starting with `Evidence:`, for example independent users or "
+                                "customers, citations, or third-party tutorials.", {"question"})
+            return Decision("needs-review", f"{how}.", {"needs-review"})
         if s.alt_repo or s.url:
             return Decision("question", "I couldn't use the link given. Please put a plain `https://` URL, without "
                             "spaces, quotes, or parentheses, in the **URL** or **Alternative Repository** field "
@@ -1175,7 +1180,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="print decisions without changing anything")
     args = parser.parse_args()
 
-    load_categories(generator_sections(ROOT / GENERATOR))
+    load_categories(*generator_sections(ROOT / GENERATOR))
     if not args.dry_run and not os.environ.get("GITHUB_ACTIONS"):
         # Opening PRs switches branches in the working tree; run for real only in CI.
         raise SystemExit("Use --dry-run locally; apply changes with the workflow's manual run.")

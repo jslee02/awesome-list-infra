@@ -814,5 +814,41 @@ class CitationNameTest(unittest.TestCase):
         self.assertEqual(triage.parse_issue("[Suggestion] x", body, TODAY).name, citation)
 
 
+class ManualReviewTest(unittest.TestCase):
+    """A list's non-software categories (papers, books) are reviewed by hand, even with code on GitHub."""
+
+    def setUp(self):
+        triage.load_categories([("slam", "SLAM & State Estimation", ""), ("papers", "Papers", "")], ["papers"])
+
+    def tearDown(self):
+        triage.load_categories([("kinematics-dynamics", "Kinematics & Dynamics", ""), ("simulators", "Simulators", ""),
+                                ("control", "Control", ""), ("slam", "SLAM & State Estimation", ""),
+                                ("other-awesome-lists", "Other Awesome Lists", "")])
+
+    def paper(self, evidence: str = "") -> triage.Suggestion:
+        body = NEW_FORM.format(box="X").replace("SLAM & State Estimation", "Papers")
+        s = triage.parse_issue("[Suggestion] x", body, TODAY)
+        s.evidence = evidence
+        return s
+
+    def test_a_paper_with_code_skips_the_repository_gates(self):
+        little_used_code = repo(stars=3, outside=0, id=7)
+        d = triage.decide(self.paper(), little_used_code, ctx())
+        self.assertEqual((d.state, d.close), ("question", False))  # asks for evidence instead of closing
+        self.assertIn("**Papers** by hand", d.message)
+        d = triage.decide(self.paper("Cited 300 times"), little_used_code, ctx())
+        self.assertEqual((d.state, d.target), ("needs-review", None))
+        d = triage.decide(self.paper(), little_used_code, ctx(pick=True))
+        self.assertEqual(d.target, ("papers", None))
+
+    def test_a_listed_paper_matches_by_its_repository(self):
+        d = triage.decide(self.paper("Cited"), repo(id=7), ctx(listed={"id:7": "Paper (Papers)"}))
+        self.assertEqual((d.close, d.labels), (True, {"duplicate"}))
+
+    def test_software_still_takes_the_gates(self):
+        s = triage.parse_issue("[Suggestion] x", NEW_FORM.format(box="X"), TODAY)
+        self.assertEqual(triage.decide(s, repo(stars=3, outside=0), ctx()).state, "closed")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -173,7 +173,10 @@ one open suggestion per person; human confirmation and affiliation.
 
 The list provides its categories through the `SECTIONS` registry of its README
 generator (`(key, title, ...)` tuples, with `data/<key>.yaml` files), and its own
-generator and validator scripts. Duplicate checks match repositories by GitHub
+generator and validator scripts. A list with non-software categories (papers,
+books, talks) can name their keys in the generator's `MANUAL_REVIEW`; a maintainer
+reviews those suggestions by hand even when they link a GitHub repository.
+Duplicate checks match repositories by GitHub
 ID, so a listed entry's `_meta.id` (recorded by the list's metadata refresh)
 still matches after the repository is renamed or transferred. The caller owns the triggers and a per-issue
 concurrency group, so sweeps (which dispatch one run per issue) never race

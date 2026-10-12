@@ -61,6 +61,35 @@ class ApplyFixesSafetyTest(unittest.TestCase):
             self.assertEqual((root / "README.md").read_text(encoding="utf-8"), "* [live](https://new.example/a)\n")
             self.assertIn(archived, (root / "data" / "tools.yaml").read_text(encoding="utf-8"))
 
+    def test_reference_definition_without_a_space(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "README.md").write_text("[ref]:http://old.example/a\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual((root / "README.md").read_text(encoding="utf-8"), "[ref]:https://new.example/a\n")
+
+    def test_a_fix_that_applies_nowhere_is_reported(self):
+        import json
+        import os
+        from unittest import mock
+        from awesome_list_infra import fix_links
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / ".github").mkdir()
+            (root / ".github" / "notes.md").write_text("http://old.example/a\n", encoding="utf-8")  # not a fix target
+            report = {"error_map": {".github/notes.md": [{"url": "http://old.example/a", "status": {"text": "404"}}]},
+                      "suggestion_map": {".github/notes.md": [{"original": "http://old.example/a",
+                                                                "suggestion": "https://web.archive.org/x"}]}}
+            (root / "report.json").write_text(json.dumps(report), encoding="utf-8")
+            cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with mock.patch("sys.argv", ["fix_links", "report.json"]):
+                    fix_links.main()
+            finally:
+                os.chdir(cwd)
+            self.assertIn("http://old.example/a", (root / "lychee" / "unfixed-links.md").read_text(encoding="utf-8"))
+
     def test_config_file_is_fixed(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

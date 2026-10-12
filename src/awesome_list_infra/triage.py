@@ -391,10 +391,11 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
             return Decision("question", f"{why}Before I can evaluate this suggestion, please:\n\n"
                             + "\n".join(f"- {a}" for a in asks), {"question"})
     target = category_target(s.category)
-    if s.repo is None or (target and target[0] in MANUAL_REVIEW):
+    manual = bool(target and target[0] in MANUAL_REVIEW and r)
+    if s.repo is None or manual:
         # Judge the links the entry would actually get (unsafe ones are dropped), including the
         # repository of a paper or book that has one.
-        if same := entry_keys(build_entry(s, r, None)[0]):
+        if same := (resource_keys(build_entry(s, r, None)[0]) if manual else entry_keys(build_entry(s, None, None)[0])):
             if listed := next((ctx.listed[k] for k in same if k in ctx.listed), None):
                 return already_listed(listed)
             if ctx.pending:
@@ -565,13 +566,27 @@ def url_key(url: str) -> str:
     return f"url:{p.netloc.lower().removeprefix('www.').removesuffix(default_port)}{rest}"
 
 
+def resource_keys(e: dict) -> set[str]:
+    """How a resource reviewed by hand (a paper, a book) is identified: by its own links, falling
+    back to its code repository only without any. Its repository isn't the resource: two papers can
+    share one, and a paper's code may also be listed as a library."""
+    own = [e.get("url"), e.get("code_url"), e.get("gitlab") and f"https://gitlab.com/{e['gitlab']}",
+           e.get("bitbucket") and f"https://bitbucket.org/{e['bitbucket']}"]
+    keys = {url_key(u) for u in own if u}
+    return keys or ({url_key(f"https://github.com/{e['github']}")} if e.get("github") else set())
+
+
+def keys_for(e: dict, category: str) -> set[str]:
+    return resource_keys(e) if category in MANUAL_REVIEW else entry_keys(e)
+
+
 def listed_repos() -> dict[str, str]:
-    """"Name (Category)" of listed entries, by each of their `entry_keys`."""
+    """"Name (Category)" of listed entries, by each of their keys (`keys_for` their category)."""
     listed = {}
     for key, title in KEY_TO_TITLE.items():
         path = DATA / f"{key}.yaml"
         for e in (yaml.safe_load(path.read_text(encoding="utf-8")) or []) if path.exists() else []:
-            listed |= dict.fromkeys(entry_keys(e), f"{e['name']} ({title})")
+            listed |= dict.fromkeys(keys_for(e, key), f"{e['name']} ({title})")
     return listed
 
 
@@ -680,7 +695,11 @@ def repo_ids(slugs) -> dict[str, int | None]:
 
 def suggestion_keys(s: Suggestion, repo_id: int | None) -> set[str]:
     """What a suggestion is about, as `entry_keys`: its repository's ID; for a resource not on
-    GitHub, its source and website; nothing if its repository doesn't exist."""
+    GitHub, its source and website; for a resource reviewed by hand, its own links (`resource_keys`);
+    nothing if its repository doesn't exist."""
+    target = category_target(s.category)
+    if repo_id and target and target[0] in MANUAL_REVIEW:
+        return resource_keys({**build_entry(s, None, None)[0], "github": s.repo})
     if repo_id:
         return {f"id:{repo_id}"}
     return entry_keys(build_entry(s, None, None)[0]) if s.repo is None else set()
@@ -887,7 +906,8 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
     regenerate = None
     fresh_main()
     listed = listed_repos()
-    if listed_as(listed, r) if r else entry_keys(entry) & listed.keys():  # another entry PR merged meanwhile
+    if keys_for(entry, target[0]) & listed.keys() if target[0] in MANUAL_REVIEW or not r else listed_as(listed, r):
+        # another entry PR merged meanwhile
         return LISTED
     prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:{branch}")
     if standing_decline(prs, events, pick):  # closed by a maintainer after this run read the PR list
@@ -913,7 +933,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
         "", decision, "",
         "**Review:** in scope? Right category? Name and description in house style?",
         *([""] + [f"- ⚠️ {f}" for f in flags] if flags else []),
-        "", marker, f"<!-- keys {' '.join(sorted(entry_keys(entry)))} -->", f"Closes #{number}",
+        "", marker, f"<!-- keys {' '.join(sorted(keys_for(entry, target[0])))} -->", f"Closes #{number}",
     ])
     title = f"content: add {entry['name']}"
     if regenerate:

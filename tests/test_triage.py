@@ -841,9 +841,22 @@ class ManualReviewTest(unittest.TestCase):
         d = triage.decide(self.paper(), little_used_code, ctx(pick=True))
         self.assertEqual(d.target, ("papers", None))
 
-    def test_a_listed_paper_matches_by_its_repository(self):
-        d = triage.decide(self.paper("Cited"), repo(id=7), ctx(listed={"id:7": "Paper (Papers)"}))
-        self.assertEqual((d.close, d.labels), (True, {"duplicate"}))
+    def test_a_paper_is_identified_by_its_own_links_not_its_code(self):
+        paper = self.paper("Cited")  # its URL is https://github.com/manankharwar/fusioncore, a GitHub URL
+        paper.url = "https://arxiv.org/abs/1"
+        listed_paper = {triage.url_key("https://arxiv.org/abs/1"): "Paper (Papers)"}
+        d = triage.decide(paper, repo(id=7), ctx(listed=listed_paper))
+        self.assertEqual((d.close, d.labels), (True, {"duplicate"}))  # the same paper
+        code_listed_as_a_library = {"id:7": "Library (SLAM & State Estimation)"}
+        self.assertEqual(triage.decide(paper, repo(id=7), ctx(listed=code_listed_as_a_library)).state, "needs-review")
+        other = {**vars(paper)}
+        other["url"] = "https://arxiv.org/abs/2"  # another paper with the same code
+        self.assertNotEqual(triage.suggestion_keys(paper, 7), triage.suggestion_keys(triage.Suggestion(**other), 7))
+
+    def test_a_paper_naming_a_missing_repository_asks_for_it(self):
+        d = triage.decide(self.paper("Cited"), None, ctx())
+        self.assertEqual(d.state, "question")
+        self.assertIn("couldn't find `github.com/", d.message)
 
     def test_software_still_takes_the_gates(self):
         s = triage.parse_issue("[Suggestion] x", NEW_FORM.format(box="X"), TODAY)

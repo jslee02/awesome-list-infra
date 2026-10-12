@@ -29,15 +29,23 @@ class AsOfTest(unittest.TestCase):
 
 
 class RefreshTest(unittest.TestCase):
-    def test_failed_commit_lookup_keeps_the_known_date(self):
+    def refresh(self, lookup_error):
         repo = {"stargazers_count": 2, "default_branch": "main", "pushed_at": "2026-10-01T00:00:00Z"}
         data = data_with("2024-01-02")
         with mock.patch.object(readme, "fetch_json", return_value=repo), \
-                mock.patch.object(readme, "fetch_default_branch_commit_date", side_effect=TimeoutError), \
+                mock.patch.object(readme, "fetch_default_branch_commit_date", side_effect=lookup_error), \
                 mock.patch.object(readme.time, "sleep"):
             readme.update_metadata(data)
+        return data["sections"][0]["content"][0]["_meta"]
+
+    def test_failed_commit_lookup_keeps_the_known_date(self):
         # Not pushed_at, which counts pushes to any branch.
-        self.assertEqual(data["sections"][0]["content"][0]["_meta"], {"stars": 2, "last_commit": "2024-01-02"})
+        self.assertEqual(self.refresh(TimeoutError), {"stars": 2, "last_commit": "2024-01-02"})
+
+    def test_empty_repository_has_no_date(self):
+        import urllib.error
+        self.assertEqual(self.refresh(urllib.error.HTTPError("u", 409, "empty", {}, None)), {"stars": 2})
+        self.assertEqual(self.refresh([None]), {"stars": 2})  # no commits on the branch
 
 
 if __name__ == "__main__":

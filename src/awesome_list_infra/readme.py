@@ -557,7 +557,7 @@ def fetch_default_branch_commit_date(owner_repo: str, default_branch: str, token
     return commit_date or None
 
 
-def fetch_repo_metadata(owner_repo: str) -> dict[str, Any] | None:
+def fetch_repo_metadata(owner_repo: str, known_last_commit: str | None = None) -> dict[str, Any] | None:
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     try:
         data = fetch_json(f"{API_BASE}/repos/{owner_repo}", token)
@@ -575,10 +575,14 @@ def fetch_repo_metadata(owner_repo: str) -> dict[str, Any] | None:
     last_commit = None
     default_branch = data.get("default_branch") or ""
     if default_branch:
+        # A transient failure keeps the last known date (pushed_at would count pushes to any
+        # branch); an empty repository (409) or branch has none.
         try:
             last_commit = fetch_default_branch_commit_date(owner_repo, default_branch, token)
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
-            pass  # update_metadata keeps the last known date; pushed_at counts pushes to any branch
+        except urllib.error.HTTPError as e:
+            last_commit = None if e.code == 409 else known_last_commit
+        except (urllib.error.URLError, TimeoutError):
+            last_commit = known_last_commit
     if last_commit:
         meta["last_commit"] = last_commit
 
@@ -606,11 +610,8 @@ def update_metadata(data: dict[str, Any], dry_run: bool = False) -> tuple[int, i
             continue
         total += 1
         print(f"  {github}...", end=" ", flush=True)
-        meta = fetch_repo_metadata(github)
+        meta = fetch_repo_metadata(github, (entry.get("_meta") or {}).get("last_commit"))
         if meta:
-            previous = entry.get("_meta") or {}
-            if "last_commit" not in meta and previous.get("last_commit"):
-                meta["last_commit"] = previous["last_commit"]  # the commit lookup failed this time
             if not dry_run:
                 entry["_meta"] = meta
             updated += 1

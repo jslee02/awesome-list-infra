@@ -628,9 +628,11 @@ def resource_keys(e: dict, aliases=()) -> set[str]:
     if e.get("url"):
         repo, repo_id = github_repo_of(e["url"]), (e.get("_meta") or {}).get("id")
         if repo_id and repo and repo in {name.lower() for name in (e.get("github") or "", *aliases) if name}:
-            below = "/".join(urllib.parse.urlsplit(e["url"]).path.strip("/").split("/")[2:])
-            if below:  # a page inside the repository: its path under the repository's ID survives renames
-                return {url_key(e["url"]), f"id:{repo_id}/{below}"}
+            parts = urllib.parse.urlsplit(e["url"])
+            below = "/".join(parts.path.strip("/").split("/")[2:])
+            if below:  # a page inside the repository: its path (and anchor) under the repository's ID survives renames
+                rest = (f"?{parts.query}" if parts.query else "") + (f"#{parts.fragment}" if parts.fragment else "")
+                return {url_key(e["url"]), f"id:{repo_id}/{below}{rest}"}
             # The repository's root (with any query or fragment): identified like a resource with no
             # page of its own.
         else:

@@ -962,6 +962,14 @@ class ManualReviewTest(unittest.TestCase):
         self.assertEqual(entry["url"], "https://github.com/new/name/blob/main/paper.pdf")  # stored under the current name
         self.assertIn("id:7/blob/main/paper.pdf", triage.resource_keys(entry))  # no alias needed once listed
 
+    def test_pages_differing_by_anchor_are_different_resources(self):
+        def keys(url, github="o/r"):
+            return triage.resource_keys({"name": "P", "url": url, "github": github, "_meta": {"id": 7}})
+        a, b = keys("https://github.com/o/r/wiki/Papers#paper-a"), keys("https://github.com/o/r/wiki/Papers#paper-b")
+        self.assertFalse(a & b)
+        self.assertIn("id:7/wiki/Papers#paper-a", keys("https://github.com/o/new/wiki/Papers#paper-a", "o/new"))
+        self.assertIn("id:7/blob/main/p.pdf?raw=true", keys("https://github.com/o/r/blob/main/p.pdf?raw=true"))
+
     def test_a_page_in_another_repository_keeps_its_url(self):
         paper = self.paper()
         paper.repo, paper.url = "author/code", "https://github.com/author/papers/blob/main/paper.pdf"

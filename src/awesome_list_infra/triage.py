@@ -395,7 +395,8 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
     if s.repo is None or manual:
         # Judge the links the entry would actually get (unsafe ones are dropped), including the
         # repository of a paper or book that has one.
-        if same := (resource_keys(build_entry(s, r, None)[0]) if manual else entry_keys(build_entry(s, None, None)[0])):
+        if same := (resource_keys(build_entry(s, r, None, manual=True)[0]) if manual
+                    else entry_keys(build_entry(s, None, None)[0])):
             if listed := next((ctx.listed[k] for k in same if k in ctx.listed), None):
                 return already_listed(listed)
             if ctx.pending:
@@ -505,15 +506,24 @@ def squash(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None) -> tuple[dict, list[str]]:
+def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None,
+                manual: bool = False) -> tuple[dict, list[str]]:
+    """The entry for a suggestion. For a resource reviewed by hand (`manual`, a paper or book), the
+    URL is only the one given, which may be a GitHub page deeper than the repository (a PDF, a wiki);
+    software also takes the repository's homepage, and never a GitHub URL, as the repository is the
+    `github` field. The manual entry depends on the suggestion alone, so it's the same wherever built."""
     flags = []
     entry: dict = {"name": s.name or (r.full_name.split("/")[1] if r else "")}
     repo_name = r.full_name.split("/")[1] if r else ""
-    if r and squash(repo_name) not in squash(entry["name"]) and squash(entry["name"]) not in squash(repo_name):
+    if r and not manual and squash(repo_name) not in squash(entry["name"]) \
+            and squash(entry["name"]) not in squash(repo_name):
         flags.append(f"Name `{entry['name']}` differs from the repository name `{repo_name}`; check spelling.")
-    # The website: the repository itself is the `github` field.
-    candidates = map(safe_url, (s.url, r.homepage) if r else (s.url,))
-    if url := next((u for u in candidates if u and not (r and on_github(u))), ""):
+    repo_root = f"https://github.com/{r.full_name if r else s.repo}".lower() if r or s.repo else ""
+    if manual:
+        candidates = [u for u in [safe_url(s.url)] if u and u.lower().rstrip("/").removesuffix(".git") != repo_root]
+    else:
+        candidates = [u for u in map(safe_url, (s.url, r.homepage) if r else (s.url,)) if u and not (r and on_github(u))]
+    if url := next(iter(candidates), ""):
         entry["url"] = url
     if r:
         entry["github"] = r.full_name
@@ -567,13 +577,19 @@ def url_key(url: str) -> str:
 
 
 def resource_keys(e: dict) -> set[str]:
-    """How a resource reviewed by hand (a paper, a book) is identified: by its own links, falling
-    back to its code repository only without any. Its repository isn't the resource: two papers can
-    share one, and a paper's code may also be listed as a library."""
-    own = [e.get("url"), e.get("code_url"), e.get("gitlab") and f"https://gitlab.com/{e['gitlab']}",
-           e.get("bitbucket") and f"https://bitbucket.org/{e['bitbucket']}"]
-    keys = {url_key(u) for u in own if u}
-    return keys or ({url_key(f"https://github.com/{e['github']}")} if e.get("github") else set())
+    """How a resource reviewed by hand (a paper, a book) is identified: by its own URL; without one,
+    by its code links elsewhere; without those, by its GitHub repository (its ID when known, which
+    survives renames). Code isn't the resource while it has a page of its own: two papers can share
+    a repository, and a paper's code may also be listed as a library."""
+    if e.get("url"):
+        return {url_key(e["url"])}
+    code = [e.get("code_url"), e.get("gitlab") and f"https://gitlab.com/{e['gitlab']}",
+            e.get("bitbucket") and f"https://bitbucket.org/{e['bitbucket']}"]
+    if keys := {url_key(u) for u in code if u}:
+        return keys
+    if repo_id := (e.get("_meta") or {}).get("id"):
+        return {f"id:{repo_id}"}
+    return {url_key(f"https://github.com/{e['github']}")} if e.get("github") else set()
 
 
 def keys_for(e: dict, category: str) -> set[str]:
@@ -699,7 +715,7 @@ def suggestion_keys(s: Suggestion, repo_id: int | None) -> set[str]:
     nothing if its repository doesn't exist."""
     target = category_target(s.category)
     if repo_id and target and target[0] in MANUAL_REVIEW:
-        return resource_keys({**build_entry(s, None, None)[0], "github": s.repo})
+        return resource_keys({**build_entry(s, None, None, manual=True)[0], "github": s.repo, "_meta": {"id": repo_id}})
     if repo_id:
         return {f"id:{repo_id}"}
     return entry_keys(build_entry(s, None, None)[0]) if s.repo is None else set()
@@ -901,7 +917,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
     alone and flagged when the suggestion changed. The branch name comes from the issue number only.
     """
     branch = f"add-entry/issue-{number}"
-    entry, flags = build_entry(s, r, target[1])
+    entry, flags = build_entry(s, r, target[1], manual=target[0] in MANUAL_REVIEW)
     marker = entry_marker({k: v for k, v in entry.items() if k != "_meta"}, target[0])
     regenerate = None
     fresh_main()

@@ -853,6 +853,30 @@ class ManualReviewTest(unittest.TestCase):
         other["url"] = "https://arxiv.org/abs/2"  # another paper with the same code
         self.assertNotEqual(triage.suggestion_keys(paper, 7), triage.suggestion_keys(triage.Suggestion(**other), 7))
 
+    def test_identity_prefers_the_papers_own_page(self):
+        gitlab = {"gitlab": "group/shared-code"}
+        a = {"name": "A", "url": "https://arxiv.org/abs/1", **gitlab}
+        b = {"name": "B", "url": "https://arxiv.org/abs/2", **gitlab}
+        self.assertNotEqual(triage.resource_keys(a), triage.resource_keys(b))  # shared code isn't the paper
+        self.assertEqual(triage.resource_keys({"name": "C", "github": "o/r", "_meta": {"id": 7}}), {"id:7"})
+
+    def test_github_pages_deeper_than_the_repository_are_kept(self):
+        paper = self.paper()
+        paper.url = "https://github.com/manankharwar/fusioncore/blob/main/paper.pdf"
+        entry, _ = triage.build_entry(paper, repo(full_name="manankharwar/fusioncore", id=7), None, manual=True)
+        self.assertEqual(entry["url"], "https://github.com/manankharwar/fusioncore/blob/main/paper.pdf")
+        paper.url = "https://github.com/manankharwar/fusioncore"  # the repository itself
+        entry, _ = triage.build_entry(paper, repo(full_name="manankharwar/fusioncore", id=7), None, manual=True)
+        self.assertNotIn("url", entry)
+
+    def test_pending_keys_match_the_entry_built_for_the_pr(self):
+        paper = self.paper()
+        paper.url = ""  # no page of its own: the repository's homepage isn't taken
+        r = repo(full_name="manankharwar/fusioncore", id=7, homepage="https://fusion.example")
+        entry, _ = triage.build_entry(paper, r, None, manual=True)
+        self.assertNotIn("url", entry)
+        self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(entry))  # {"id:7"}, rename-proof
+
     def test_a_paper_naming_a_missing_repository_asks_for_it(self):
         d = triage.decide(self.paper("Cited"), None, ctx())
         self.assertEqual(d.state, "question")

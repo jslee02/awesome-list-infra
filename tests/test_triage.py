@@ -656,7 +656,7 @@ class Round12Test(unittest.TestCase):
 
     def test_repo_ids(self):
         from unittest import mock
-        found = {"data": {"r0": {"databaseId": 5}, "r1": None}, "errors": [{"type": "NOT_FOUND", "path": ["r1"]}]}
+        found = {"data": {"r0": {"databaseId": 5, "nameWithOwner": "a/b"}, "r1": None}, "errors": [{"type": "NOT_FOUND", "path": ["r1"]}]}
         with mock.patch.object(triage, "api", return_value=found) as api:
             self.assertEqual(triage.repo_ids(["a/b", "c/d", "a/b"]), {"a/b": 5, "c/d": None})
             self.assertEqual(api.call_args[0][2]["variables"], {"o0": "a", "n0": "b", "o1": "c", "n1": "d"})
@@ -899,6 +899,13 @@ class ManualReviewTest(unittest.TestCase):
         r = repo(full_name="manankharwar/fusioncore", id=7)
         pr_entry, _ = triage.build_entry(paper, r, None, manual=True)
         self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(pr_entry))
+
+    def test_pending_keys_know_a_renamed_repositorys_current_root(self):
+        paper = self.paper()
+        paper.repo, paper.url = "old/name", "https://github.com/new/name"  # old slug, current root URL
+        triage.REPO_NAMES[7] = "new/name"  # recorded by this run's lookups
+        pr_entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
+        self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(pr_entry))  # {"id:7"}
 
     def test_a_paper_naming_a_missing_repository_asks_for_it(self):
         d = triage.decide(self.paper("Cited"), None, ctx())

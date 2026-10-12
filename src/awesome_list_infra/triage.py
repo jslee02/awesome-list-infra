@@ -703,6 +703,9 @@ def outside_people(owner: str, name: str) -> tuple[int, bool]:
     return len(people), False
 
 
+REPO_NAMES: dict[int, str] = {}  # repository ID -> its current owner/repo, as looked up in this run
+
+
 def repo_ids(slugs) -> dict[str, int | None]:
     """GitHub IDs of owner/repo slugs, or None for repositories that don't exist. Like the REST
     API, GraphQL follows renames and transfers; one request covers up to 100 slugs."""
@@ -710,12 +713,13 @@ def repo_ids(slugs) -> dict[str, int | None]:
     for start in range(0, len(slugs), 100):
         chunk = slugs[start:start + 100]
         params = ",".join(f"$o{i}:String!,$n{i}:String!" for i in range(len(chunk)))
-        fields = " ".join(f"r{i}:repository(owner:$o{i},name:$n{i}){{databaseId}}" for i in range(len(chunk)))
+        fields = " ".join(f"r{i}:repository(owner:$o{i},name:$n{i}){{databaseId nameWithOwner}}" for i in range(len(chunk)))
         variables = {f"{k}{i}": part for i, slug in enumerate(chunk) for k, part in zip("on", slug.split("/"))}
         data = api("POST", "/graphql", {"query": f"query({params}){{{fields}}}", "variables": variables})
         if data.get("data") is None or any(e.get("type") != "NOT_FOUND" for e in data.get("errors") or []):
             raise RuntimeError(f"GraphQL repository lookup failed: {data.get('errors')}")  # the next run retries
         ids |= {slug: (data["data"][f"r{i}"] or {}).get("databaseId") for i, slug in enumerate(chunk)}
+        REPO_NAMES.update({found["databaseId"]: found["nameWithOwner"] for found in data["data"].values() if found})
     return ids
 
 
@@ -728,7 +732,12 @@ def suggestion_keys(s: Suggestion, repo_id: int | None) -> set[str]:
         if s.repo and not repo_id:
             return set()  # a named repository that doesn't exist: nothing to compare yet
         entry = build_entry(s, None, None, manual=True)[0]
-        return resource_keys({**entry, "github": s.repo, "_meta": {"id": repo_id}} if repo_id else entry)
+        if not repo_id:
+            return resource_keys(entry)
+        name = REPO_NAMES.get(repo_id, s.repo)  # the current name: the PR's entry drops that root URL too
+        if entry.get("url") and github_repo_root(entry["url"]) == name.lower():
+            del entry["url"]
+        return resource_keys({**entry, "github": name, "_meta": {"id": repo_id}})
     if repo_id:
         return {f"id:{repo_id}"}
     return entry_keys(build_entry(s, None, None)[0]) if s.repo is None else set()
@@ -759,6 +768,7 @@ def fetch_repo(slug: str) -> RepoInfo | None:
         if e.code in (404, 451):
             return None
         raise
+    REPO_NAMES[d["id"]] = d["full_name"]
     owner, name = d["full_name"].split("/")
     try:
         branch = urllib.parse.quote(d["default_branch"], safe="")

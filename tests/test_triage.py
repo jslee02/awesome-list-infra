@@ -959,7 +959,8 @@ class ManualReviewTest(unittest.TestCase):
         paper = self.paper()
         paper.repo, paper.url = "old/name", "https://github.com/old/name/blob/main/paper.pdf"
         entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
-        self.assertIn("id:7/blob/main/paper.pdf", triage.resource_keys(entry, [paper.repo]))
+        self.assertEqual(entry["url"], "https://github.com/new/name/blob/main/paper.pdf")  # stored under the current name
+        self.assertIn("id:7/blob/main/paper.pdf", triage.resource_keys(entry))  # no alias needed once listed
 
     def test_an_id_less_listed_entry_matches_by_slug(self):
         listed = {}

@@ -75,6 +75,8 @@ jobs:
     with:
       # For lists whose README is generated; omit otherwise.
       generate-command: python3 scripts/generate_readme.py
+    secrets:
+      CREATE_PR_TOKEN: ${{ secrets.CREATE_PR_TOKEN }}  # optional; lets link-fix PRs run CI
 ```
 
 Pull requests fail only on definitive broken links. Scheduled runs try to

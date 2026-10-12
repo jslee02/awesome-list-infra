@@ -141,8 +141,9 @@ def unsafe_data_fixes(fixes: dict[str, str], root: Path) -> set[str]:
         # A URL present in the data that no match here would replace (it continues past the
         # fixed prefix, or sits in compact flow YAML like "url: x,next: y") can't be fixed
         # consistently, so leave it everywhere rather than fix only the generated Markdown.
+        # Copies embedded in other URLs (an archive link) are other links and don't count.
         matched = set(build_replacement_pattern(fixes).findall(content))
-        if unmatched := {url for url in fixes if url in content} - matched:
+        if unmatched := {url for url in fixes if re.search(URL_STARTS + re.escape(url), content)} - matched:
             print(f"  not fixing {sorted(unmatched)}: {path} has them where they can't be replaced cleanly", file=sys.stderr)
             rejected |= unmatched
         if not corrupts(content, fixes):

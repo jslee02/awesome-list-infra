@@ -50,6 +50,17 @@ class ApplyFixesSafetyTest(unittest.TestCase):
             self.assertEqual((root / "README.md").read_text(encoding="utf-8"),
                              f"* [A](https://new.example/a)\n* [B]({archived})\n")
 
+    def test_an_archived_copy_in_data_does_not_block_the_fix(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "data").mkdir()
+            archived = "https://web.archive.org/web/2020/http://old.example/a"
+            (root / "data" / "tools.yaml").write_text(f"- name: A\n  url: {archived}\n", encoding="utf-8")
+            (root / "README.md").write_text("* [live](http://old.example/a)\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual((root / "README.md").read_text(encoding="utf-8"), "* [live](https://new.example/a)\n")
+            self.assertIn(archived, (root / "data" / "tools.yaml").read_text(encoding="utf-8"))
+
     def test_config_file_is_fixed(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

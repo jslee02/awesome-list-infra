@@ -2,6 +2,8 @@
 
 import json
 import unittest
+
+import yaml
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -785,6 +787,23 @@ class Round12Test(unittest.TestCase):
     def test_closed_pr_from_a_deleted_fork(self):
         pr = {"merged": False, "number": 200, "head": {"ref": "add-entry/issue-160", "repo": None}}
         self.assertEqual(triage.dispatch_for_closed_pr(pr), "PR: nothing to do")
+
+
+class AddEntryTest(unittest.TestCase):
+    def added(self, existing: list[str]) -> list[str]:
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as data:
+            (Path(data) / "control.yaml").write_text(yaml.dump([{"name": n} for n in existing]), encoding="utf-8")
+            with mock.patch.object(triage, "DATA", Path(data)), mock.patch.object(triage.subprocess, "run"):
+                triage.add_entry({"name": "Mid"}, "control")
+            return [e["name"] for e in yaml.safe_load((Path(data) / "control.yaml").read_text(encoding="utf-8"))]
+
+    def test_alphabetical_file_stays_alphabetical(self):
+        self.assertEqual(self.added(["Alpha", "Zeta"]), ["Alpha", "Mid", "Zeta"])
+
+    def test_curated_order_is_kept(self):
+        self.assertEqual(self.added(["Survey", "Alpha"]), ["Survey", "Alpha", "Mid"])
 
 
 if __name__ == "__main__":

@@ -578,7 +578,10 @@ def listed_as(listed: dict[str, str], r: RepoInfo, *slugs: str) -> str | None:
 def add_entry(entry: dict, key: str) -> None:
     path = DATA / f"{key}.yaml"
     entries = (yaml.safe_load(path.read_text(encoding="utf-8")) or []) if path.exists() else []
-    entries = sorted(entries + [entry], key=lambda e: e["name"].lower())
+    names = [e["name"].lower() for e in entries]
+    # An alphabetical file stays alphabetical; a curated order (papers, talks) is kept, the new
+    # entry going last for a maintainer to place in review.
+    entries = sorted(entries + [entry], key=lambda e: e["name"].lower()) if names == sorted(names) else entries + [entry]
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(entries, f, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120)
     subprocess.run([sys.executable, str(ROOT / GENERATOR)], cwd=ROOT, check=True, capture_output=True)

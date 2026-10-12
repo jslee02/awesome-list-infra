@@ -563,9 +563,9 @@ def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None,
         candidates = [u for u in map(safe_url, (s.url, r.homepage) if r else (s.url,)) if u and not (r and on_github(u))]
     if url := next(iter(candidates), ""):
         old = github_repo_of(url)
-        if manual and r and old and old != r.full_name.lower():
-            # A page under the repository's old name is stored under its current one, so the
-            # listed entry keeps a rename-proof key without the submitted alias.
+        if manual and r and old in same_repo - {r.full_name.lower()}:
+            # A page under the repository's submitted old name is stored under its current one, so
+            # the listed entry keeps a rename-proof key without the alias; other repositories' pages stay.
             parts = urllib.parse.urlsplit(url)
             url = urllib.parse.urlunsplit(parts._replace(path="/" + r.full_name + parts.path[len(old) + 1:]))
         entry["url"] = url

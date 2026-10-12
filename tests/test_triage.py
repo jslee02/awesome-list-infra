@@ -962,6 +962,15 @@ class ManualReviewTest(unittest.TestCase):
         self.assertEqual(entry["url"], "https://github.com/new/name/blob/main/paper.pdf")  # stored under the current name
         self.assertIn("id:7/blob/main/paper.pdf", triage.resource_keys(entry))  # no alias needed once listed
 
+    def test_a_page_in_another_repository_keeps_its_url(self):
+        paper = self.paper()
+        paper.repo, paper.url = "author/code", "https://github.com/author/papers/blob/main/paper.pdf"
+        entry, _ = triage.build_entry(paper, repo(full_name="author/code", id=7), None, manual=True)
+        self.assertEqual(entry["url"], paper.url)
+        paper.repo = "author/old-code"  # renamed code repository: the page is still elsewhere
+        entry, _ = triage.build_entry(paper, repo(full_name="author/code", id=7), None, manual=True)
+        self.assertEqual(entry["url"], paper.url)
+
     def test_an_id_less_listed_entry_matches_by_slug(self):
         listed = {}
         listed |= dict.fromkeys(triage.resource_keys({"name": "P", "github": "o/r"}), "P (Papers)")  # no _meta.id yet

@@ -60,11 +60,14 @@ def get_unfixable(report: dict, fixed_urls: set[str]) -> dict[str, list[dict]]:
 # contain spaces, so "." or "," followed by whitespace, a closing bracket, or the
 # end is punctuation (end of a sentence, a flow-YAML separator), not URL.
 URL_CONTINUES = r"(?![A-Za-z0-9_\-~%!$&*+;=:@/?#(]|[.,](?=[^\s\]}]))"
+# Nor does a match start inside another URL, e.g. https://web.archive.org/web/2020/https://old.example.
+# A Markdown reference definition ("[ref]:url") is the one place a URL may follow a colon.
+URL_STARTS = r"(?:(?<=\]:)|(?<![A-Za-z0-9_\-~%!$&*+;=:@/?#.]))"
 
 
 def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:
     sorted_urls = sorted(fixes.keys(), key=len, reverse=True)
-    return re.compile("(?:" + "|".join(re.escape(url) for url in sorted_urls) + ")" + URL_CONTINUES)
+    return re.compile(URL_STARTS + "(?:" + "|".join(re.escape(url) for url in sorted_urls) + ")" + URL_CONTINUES)
 
 
 def read_text(path: Path) -> str:
@@ -139,8 +142,9 @@ def unsafe_data_fixes(fixes: dict[str, str], root: Path) -> set[str]:
         # A URL present in the data that no match here would replace (it continues past the
         # fixed prefix, or sits in compact flow YAML like "url: x,next: y") can't be fixed
         # consistently, so leave it everywhere rather than fix only the generated Markdown.
+        # Copies embedded in other URLs (an archive link) are other links and don't count.
         matched = set(build_replacement_pattern(fixes).findall(content))
-        if unmatched := {url for url in fixes if url in content} - matched:
+        if unmatched := {url for url in fixes if re.search(URL_STARTS + re.escape(url), content)} - matched:
             print(f"  not fixing {sorted(unmatched)}: {path} has them where they can't be replaced cleanly", file=sys.stderr)
             rejected |= unmatched
         if not corrupts(content, fixes):
@@ -330,9 +334,12 @@ def main() -> None:
 
     for url in unsafe_data_fixes(all_fixes, root) if all_fixes else ():
         all_fixes.pop(url)
-    unfixable = get_unfixable(report, set(all_fixes.keys()))
+    changes = apply_fixes(all_fixes, root) if all_fixes else {}
+    applied = {old: new for fixes in changes.values() for old, new in fixes}
+    # Only links actually replaced count as fixed: one whose fix matched nowhere is reported too.
+    unfixable = get_unfixable(report, set(applied))
 
-    if not all_fixes:
+    if not changes:
         print("No auto-fixable links found.")
         set_output("fixes_applied", "false")
         if unfixable:
@@ -345,8 +352,6 @@ def main() -> None:
             set_output("has_unfixable", "false")
         return
 
-    changes = apply_fixes(all_fixes, root)
-    applied = {old: new for fixes in changes.values() for old, new in fixes}
     (out_dir / "applied-fixes.json").write_text(json.dumps(applied, indent=2), encoding="utf-8")
     print(f"Files modified  : {len(changes)}")
     for filepath, fixes in sorted(changes.items()):

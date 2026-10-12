@@ -75,11 +75,14 @@ jobs:
     with:
       # For lists whose README is generated; omit otherwise.
       generate-command: python3 scripts/generate_readme.py
+    secrets:
+      CREATE_PR_TOKEN: ${{ secrets.CREATE_PR_TOKEN }}  # optional; lets link-fix PRs run CI
 ```
 
 Pull requests fail only on definitive broken links. Scheduled runs try to
 replace redirects and dead links with suggested or archived URLs, then open a
-maintenance PR for review.
+maintenance PR for review. Links they can't fix are listed in one open
+"Link Checker" issue, which later runs update instead of opening another.
 
 ### Protect README
 
@@ -280,8 +283,8 @@ the result, and opens a signed-off maintenance PR only when expected metadata
 or README files changed. By default it stages `README.md` and the `data`
 directory.
 
-If you want maintenance PRs created by this workflow to trigger normal
-`pull_request` CI without extra manual approval, add a repository secret named
+PRs opened with the default `GITHUB_TOKEN` trigger no `pull_request` CI at
+all. To have maintenance PRs run CI, add a repository secret named
 `CREATE_PR_TOKEN` containing a fine-grained bot token or GitHub App token with
 `contents: write` and `pull-requests: write`. The workflow falls back to
 `GITHUB_TOKEN` when that secret is not present. Map only this secret in caller

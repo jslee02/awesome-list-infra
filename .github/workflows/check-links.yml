@@ -30,6 +30,9 @@ on:
         description: >-
           Regenerates README.md from data after link fixes (e.g. "python3
           scripts/generate_readme.py"), for lists whose README is generated.
+    secrets:
+      CREATE_PR_TOKEN:
+        required: false
 
 jobs:
   check-links:
@@ -129,6 +132,8 @@ jobs:
         if: steps.fix.outputs.fixes_applied == 'true' && steps.regen.outputs.fixes_applied != 'false'
         uses: peter-evans/create-pull-request@v8
         with:
+          token: ${{ secrets.CREATE_PR_TOKEN || github.token }}
+          signoff: true
           commit-message: "fix: replace broken links with updated URLs"
           # Not the job's own lychee/ reports or the infra checkout.
           add-paths: |
@@ -141,12 +146,27 @@ jobs:
           delete-branch: true
           labels: maintenance
 
-      - name: Create issue for unfixable links
+      # Update the open issue from an earlier run rather than opening one every week.
+      - name: Find the open unfixable-links issue
+        if: steps.fix.outputs.has_unfixable == 'true' || steps.regen.outputs.has_unfixable == 'true'
+        id: issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "Link Checker: broken links requiring manual fix"
+        run: |
+          set -euo pipefail
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$TITLE\"" \
+            --json number,title --jq "[.[] | select(.title == env.TITLE)][0].number // empty")
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update the issue for unfixable links
         if: steps.fix.outputs.has_unfixable == 'true' || steps.regen.outputs.has_unfixable == 'true'
         uses: peter-evans/create-issue-from-file@v6
         with:
           title: "Link Checker: broken links requiring manual fix"
           content-filepath: lychee/unfixed-links.md
+          issue-number: ${{ steps.issue.outputs.number }}
           labels: maintenance
           assignees: ${{ inputs.issue-assignees }}
 

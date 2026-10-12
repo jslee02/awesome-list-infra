@@ -64,7 +64,7 @@ repos:
     main_protected: false
     shared_infra: generic-generated-readme
     notes: Branch protection requires GitHub Pro or making the repository public.
-  - name: awesome-multibody-dynamics-simulation
+  - name: awesome-robotics-simulation  # formerly awesome-multibody-dynamics-simulation
     visibility: public
     default_branch: main
     main_protected: true

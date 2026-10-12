@@ -64,7 +64,7 @@ ACTIVE_DAYS = 365
 MONITOR_DAYS = 365
 INSIDERS = {"OWNER", "MEMBER", "COLLABORATOR"}
 ATTESTATION = "i am a person, and i wrote or reviewed this suggestion myself"
-AGENT_TAG = "🤖"
+AGENT_TAG = "🤖🤖🤖"  # as documented; a single robot emoji may be part of a name
 # Issues opened before the form asked for affiliation and confirmation.
 POLICY_START = date(2026, 10, 12)
 

@@ -40,7 +40,7 @@ on:
         default: |
           This suggestion has been marked stale because we asked for more information and have not seen an author update for about two weeks.
 
-          Please update the issue with the requested details, or reply confirming that it should be reviewed as a non-GitHub resource. The stale label will be removed automatically after new activity. If there is no update in another two weeks, this issue will be closed.
+          Please provide the requested details by editing the issue or replying here. The stale label will be removed automatically after new activity. If there is no update in another two weeks, this issue will be closed.
         description: Comment posted when marking a waiting issue stale.
       close-issue-message:
         type: string

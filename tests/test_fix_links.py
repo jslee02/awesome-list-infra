@@ -41,6 +41,60 @@ class ApplyFixesTest(unittest.TestCase):
 
 
 class ApplyFixesSafetyTest(unittest.TestCase):
+    def test_a_url_inside_another_url_is_left_alone(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archived = "https://web.archive.org/web/2020/http://old.example/a"
+            (root / "README.md").write_text(f"* [A](http://old.example/a)\n* [B]({archived})\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual((root / "README.md").read_text(encoding="utf-8"),
+                             f"* [A](https://new.example/a)\n* [B]({archived})\n")
+
+    def test_an_archived_copy_in_data_does_not_block_the_fix(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "data").mkdir()
+            archived = "https://web.archive.org/web/2020/http://old.example/a"
+            (root / "data" / "tools.yaml").write_text(f"- name: A\n  url: {archived}\n", encoding="utf-8")
+            (root / "README.md").write_text("* [live](http://old.example/a)\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual((root / "README.md").read_text(encoding="utf-8"), "* [live](https://new.example/a)\n")
+            self.assertIn(archived, (root / "data" / "tools.yaml").read_text(encoding="utf-8"))
+
+    def test_reference_definition_without_a_space(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "README.md").write_text("[ref]:http://old.example/a\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual((root / "README.md").read_text(encoding="utf-8"), "[ref]:https://new.example/a\n")
+            proxied = "https://proxy.example/redirect:http://old.example/a"  # a colon inside another URL
+            (root / "README.md").write_text(f"* [A](http://old.example/a) and {proxied}\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual((root / "README.md").read_text(encoding="utf-8"),
+                             f"* [A](https://new.example/a) and {proxied}\n")
+
+    def test_a_fix_that_applies_nowhere_is_reported(self):
+        import json
+        import os
+        from unittest import mock
+        from awesome_list_infra import fix_links
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / ".github").mkdir()
+            (root / ".github" / "notes.md").write_text("http://old.example/a\n", encoding="utf-8")  # not a fix target
+            report = {"error_map": {".github/notes.md": [{"url": "http://old.example/a", "status": {"text": "404"}}]},
+                      "suggestion_map": {".github/notes.md": [{"original": "http://old.example/a",
+                                                                "suggestion": "https://web.archive.org/x"}]}}
+            (root / "report.json").write_text(json.dumps(report), encoding="utf-8")
+            cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with mock.patch("sys.argv", ["fix_links", "report.json"]):
+                    fix_links.main()
+            finally:
+                os.chdir(cwd)
+            self.assertIn("http://old.example/a", (root / "lychee" / "unfixed-links.md").read_text(encoding="utf-8"))
+
     def test_config_file_is_fixed(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

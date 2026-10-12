@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from awesome_list_infra.fix_links import apply_fixes, reverted_fixes
+from awesome_list_infra.fix_links import apply_fixes, get_redirect_fixes, reverted_fixes
 
 
 class ApplyFixesTest(unittest.TestCase):
@@ -224,3 +224,29 @@ class RegenerationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RedirectFixesTest(unittest.TestCase):
+    def test_only_respellings_and_repository_renames_are_followed(self):
+        # From a real lychee report (2026-10-12), in its current JSON shape.
+        moves = {
+            "http://wiki.ros.org/urdf": "https://wiki.ros.org/urdf",
+            "http://www.resibots.eu/limbo/": "http://resibots.eu/limbo/",
+            "https://isaac-sim.github.io/IsaacLab": "https://isaac-sim.github.io/IsaacLab/",
+            "https://github.com/haosulab/ManiSkill": "https://github.com/mani-skill/ManiSkill",
+            # Moved elsewhere: left for a person.
+            "https://github.com/o/r/issues/new?template=x.yml": "https://github.com/login?return_to=x",
+            "https://github.com/ros2/ros2/wiki": "https://github.com/ros2/ros2",
+            "https://www.artiminds.com/": "https://tpglobalfx.com/",
+            "http://www.cimne.com/kratos/": "https://cimne.com/wp-content/uploads/2026/03/kratos.png",
+            "http://www.sim.informatik.tu-darmstadt.de/res/sw/mbslib": "https://www.sim.informatik.tu-darmstadt.deres/sw/mbslib",
+            "https://klampt.org/": "http://klampt.org/",
+        }
+        report = {"redirect_map": {"README.md": [
+            {"origin": old, "redirects": [{"url": new, "code": 301}]} for old, new in moves.items()]}}
+        self.assertEqual(get_redirect_fixes(report), dict(list(moves.items())[:4]))
+
+    def test_older_report_shape(self):
+        report = {"redirect_map": {"README.md": [{"url": "http://a.example/x", "status": {
+            "redirects": {"redirects": [{"url": "https://www.a.example/x/", "code": 301}]}}}]}}
+        self.assertEqual(get_redirect_fixes(report), {"http://a.example/x": "https://www.a.example/x/"})

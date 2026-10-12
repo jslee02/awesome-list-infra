@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 
@@ -15,16 +16,41 @@ def load_report(path: str) -> dict:
         return json.load(f)
 
 
+def same_place(old: str, new: str) -> bool:
+    """Whether a redirect only respells a URL (https, www., a trailing slash) or follows a renamed
+    GitHub repository. Other moves are left to a person: an expired domain can redirect to an
+    unrelated site, a page to its site's home or an image, a login wall to the sign-in page."""
+    a, b = urllib.parse.urlsplit(old), urllib.parse.urlsplit(new)
+    if b.scheme not in (a.scheme, "https"):
+        return False
+
+    def spot(p: urllib.parse.SplitResult, path: str) -> tuple:
+        return (p.hostname or "").removeprefix("www."), p.port, path.rstrip("/"), p.query, p.fragment
+
+    if spot(a, a.path) == spot(b, b.path):
+        return True
+    old_path, new_path = a.path.split("/"), b.path.split("/")  # ["", owner, repo, rest...]
+    return (spot(a, "") == spot(b, "") == ("github.com", None, "", a.query, a.fragment)
+            and len(old_path) > 2 and len(new_path) > 2 and all(new_path[1:3])
+            and old_path[3:] == new_path[3:])
+
+
 def get_redirect_fixes(report: dict) -> dict[str, str]:
     fixes: dict[str, str] = {}
     for _source, entries in report.get("redirect_map", {}).items():
         for entry in entries:
-            original = entry["url"]
-            chain = entry.get("status", {}).get("redirects", {}).get("redirects", [])
-            if chain:
-                final = chain[-1]["url"]
-                if final != original:
-                    fixes[original] = final
+            # lychee's current JSON: {"origin", "redirects": [hops]}; older: {"url", "status": {"redirects": {...}}}
+            original = entry.get("origin") or entry.get("url", "")
+            chain = entry.get("redirects")
+            if not isinstance(chain, list):
+                chain = entry.get("status", {}).get("redirects", {}).get("redirects", [])
+            final = chain[-1]["url"] if chain else original
+            if final == original:
+                continue
+            if same_place(original, final):
+                fixes[original] = final
+            else:
+                print(f"  not following {original} -> {final}: it moved elsewhere; check by hand")
     return fixes
 
 

@@ -254,7 +254,7 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
               or (None if is_form else repo_in_text(without_evidence(body)))
               or next(iter(reply_repos), None)),
         reply_repos=reply_repos,
-        url=body_url if safe_url(body_url) or not reply_url else reply_url,
+        url=body_url if safe_url(body_url) or not reply_url or github_repo_root(reply_url) else reply_url,
         category=(fields.get("category") or kv.get("category") or "").strip(),
         description=fields.get("description") or kv.get("description") or "",
         alt_repo=fields.get("alternative repository", "").strip(),
@@ -502,6 +502,15 @@ def pick_description(submitted: str, about: str) -> tuple[str, bool]:
     return (s + ".", True) if s else ("", True)
 
 
+def github_repo_of(url: str) -> str | None:
+    """"owner/repo", lowercased, of any URL into a GitHub repository (its root or deeper); else None."""
+    parts = urllib.parse.urlsplit(url)
+    path = parts.path.strip("/").lower().split("/")
+    if (parts.hostname or "").removeprefix("www.") == "github.com" and len(path) >= 2 and all(path[:2]):
+        return f"{path[0]}/{path[1].removesuffix('.git')}"
+    return None
+
+
 def github_repo_root(url: str) -> str | None:
     """"owner/repo", lowercased, if the URL is a GitHub repository's root however spelled (scheme,
     www., trailing slash, .git, query, fragment); None for any other URL, a deeper page included."""
@@ -550,7 +559,7 @@ def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None,
             entry["gitlab" if host[1] == "gitlab.com" else "bitbucket"] = path
         else:
             entry["code_url"] = alt
-    description, trimmed = pick_description(s.description, r.about if r else "")
+    description, trimmed = pick_description(s.description, r.about if r and not manual else "")
     if trimmed:
         flags.append("Description was trimmed or is missing; polish it to one sentence of 100 characters or fewer.")
     if description:
@@ -596,6 +605,12 @@ def resource_keys(e: dict) -> set[str]:
     survives renames). Code isn't the resource while it has a page of its own: two papers can share
     a repository, and a paper's code may also be listed as a library."""
     if e.get("url"):
+        repo, repo_id = github_repo_of(e["url"]), (e.get("_meta") or {}).get("id")
+        if repo_id and repo and repo == (e.get("github") or "").lower():
+            parts = urllib.parse.urlsplit(e["url"])
+            below = "/".join(parts.path.strip("/").split("/")[2:])  # the page's path inside the repository
+            return {f"id:{repo_id}/{below}" + (f"?{parts.query}" if parts.query else "")
+                    + (f"#{parts.fragment}" if parts.fragment else "")}
         return {url_key(e["url"])}
     code = [e.get("code_url"), e.get("gitlab") and f"https://gitlab.com/{e['gitlab']}",
             e.get("bitbucket") and f"https://bitbucket.org/{e['bitbucket']}"]
@@ -765,7 +780,9 @@ def peer_keys(issues: list[dict]) -> dict[int, set[str]]:
     return result
 
 
-def fetch_repo(slug: str) -> RepoInfo | None:
+def fetch_repo(slug: str, outside: bool = True) -> RepoInfo | None:
+    """The repository as the gates see it; `outside=False` skips counting outside people, which
+    only the software gates use."""
     try:
         d = api("GET", f"/repos/{slug}")
     except urllib.error.HTTPError as e:
@@ -789,7 +806,7 @@ def fetch_repo(slug: str) -> RepoInfo | None:
         last_commit=min(last, date.today()) if last else None,
         archived=d["archived"],
         license=(d.get("license") or {}).get("spdx_id") if d.get("license") else None,
-        **dict(zip(("outside", "outside_complete"), outside_people(owner, name))),
+        **dict(zip(("outside", "outside_complete"), outside_people(owner, name) if outside else (0, True))),
         about=d.get("description") or "",
         homepage=d.get("homepage") or "",
         language=d.get("language") or "",
@@ -1088,11 +1105,12 @@ def triage(number: int, dry_run: bool) -> str:
     active = in_triage(labels, reopened_since_triage(comments, events))
     open_issues = [i for i in paged(f"/repos/{REPO}/issues?state=open") if i["number"] != number and is_suggestion(i)]
     others = blocking_suggestions(number, active, [normalized(i) for i in open_issues if i["user"]["login"] == author])
-    r = fetch_repo(s.repo) if s.repo else None
+    gated = not (target := category_target(s.category)) or target[0] not in MANUAL_REVIEW
+    r = fetch_repo(s.repo, outside=gated) if s.repo else None
     for reply_repo in s.reply_repos if r is None else []:  # the author corrected the repository
-        if r := fetch_repo(reply_repo):
-            if s.url and s.repo and github_repo_root(s.url) == s.repo.lower():
-                s.url = ""  # the root of the repository the reply corrected, not the resource's page
+        if r := fetch_repo(reply_repo, outside=gated):
+            if s.url and s.repo and github_repo_of(s.url) == s.repo.lower():
+                s.url = ""  # a page in the repository the reply corrected, not the resource's own
             s.repo = reply_repo
             break
     # The open suggestion of the same resource first in the queue, so two entry PRs never race

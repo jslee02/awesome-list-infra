@@ -917,6 +917,35 @@ class ManualReviewTest(unittest.TestCase):
         d = triage.decide(paper, None, ctx(pick=True))
         self.assertEqual((d.state, d.target), ("question", None))
 
+    def test_github_pages_key_by_repository_id_and_path(self):
+        old = {"name": "P", "url": "https://github.com/Old/Name/blob/main/paper.pdf", "github": "Old/Name", "_meta": {"id": 7}}
+        new = {"name": "P", "url": "https://github.com/new/name/blob/main/paper.pdf", "github": "new/name", "_meta": {"id": 7}}
+        self.assertEqual(triage.resource_keys(old), {"id:7/blob/main/paper.pdf"})
+        self.assertEqual(triage.resource_keys(old), triage.resource_keys(new))  # a rename keeps the identity
+
+    def test_a_reply_naming_only_a_repository_keeps_an_unusable_link_visible(self):
+        body = NEW_FORM.format(box="X").replace("SLAM & State Estimation", "Papers").replace(
+            "https://github.com/manankharwar/fusioncore", "https://en.wikipedia.org/wiki/Tool_(robotics)")
+        s = triage.parse_issue("[Suggestion] x", body, TODAY, ["The code is https://github.com/o/fixed"])
+        self.assertEqual(s.url, "https://en.wikipedia.org/wiki/Tool_(robotics)")  # still asked for
+
+    def test_a_paper_never_borrows_its_codes_description(self):
+        paper = self.paper()
+        paper.description = ""
+        entry, flags = triage.build_entry(paper, repo(id=7, about="A library for robots."), None, manual=True)
+        self.assertNotIn("description", entry)
+        self.assertTrue(any("Description" in f for f in flags))
+
+    def test_hand_reviewed_repositories_skip_outside_people(self):
+        from unittest import mock
+        meta = {"id": 7, "full_name": "o/r", "default_branch": "main", "created_at": "2024-01-01T00:00:00Z",
+                "stargazers_count": 1, "archived": False}
+        with mock.patch.object(triage, "api", side_effect=lambda m, path, *a, **k: meta if path.endswith("/repos/o/r") else []), \
+                mock.patch.object(triage, "outside_people") as outside:
+            info = triage.fetch_repo("o/r", outside=False)
+        outside.assert_not_called()
+        self.assertEqual((info.outside, info.outside_complete), (0, True))
+
     def test_a_paper_naming_a_missing_repository_asks_for_it(self):
         d = triage.decide(self.paper("Cited"), None, ctx())
         self.assertEqual(d.state, "question")

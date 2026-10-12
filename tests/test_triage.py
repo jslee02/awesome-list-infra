@@ -913,6 +913,9 @@ class ManualReviewTest(unittest.TestCase):
         d = triage.decide(paper, repo(id=7), ctx(pick=True))
         self.assertEqual((d.state, d.target), ("question", None))
         self.assertIn("couldn't use the link", d.message)
+        paper.repo, paper.alt_repo = None, "https://gitlab.com/group/code"  # code elsewhere can't stand in either
+        d = triage.decide(paper, None, ctx(pick=True))
+        self.assertEqual((d.state, d.target), ("question", None))
 
     def test_a_paper_naming_a_missing_repository_asks_for_it(self):
         d = triage.decide(self.paper("Cited"), None, ctx())

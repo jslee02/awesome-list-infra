@@ -392,7 +392,7 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
                             + "\n".join(f"- {a}" for a in asks), {"question"})
     target = category_target(s.category)
     manual = bool(target and target[0] in MANUAL_REVIEW)
-    if manual and r and s.url and not safe_url(s.url):
+    if manual and s.url and not safe_url(s.url):
         return Decision("question", "I couldn't use the link given. Please put a plain `https://` URL for the "
                         "resource itself, without spaces, quotes, or parentheses, in the **URL** field (edit the "
                         "issue), or reply with it.", {"question"})
@@ -1091,7 +1091,7 @@ def triage(number: int, dry_run: bool) -> str:
     r = fetch_repo(s.repo) if s.repo else None
     for reply_repo in s.reply_repos if r is None else []:  # the author corrected the repository
         if r := fetch_repo(reply_repo):
-            if github_repo_root(s.url or "") not in (None, reply_repo.lower(), r.full_name.lower()):
+            if s.url and s.repo and github_repo_root(s.url) == s.repo.lower():
                 s.url = ""  # the root of the repository the reply corrected, not the resource's page
             s.repo = reply_repo
             break

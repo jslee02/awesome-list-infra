@@ -14,7 +14,7 @@ copying workflow and maintenance logic between repositories.
   with their existing schema-driven data layouts.
 - Six older public repositories now use the generic generated README layout from
   this package: `awesome-cpp-python-binding-generator`, `awesome-gpgpu`,
-  `awesome-graphics-libraries`, `awesome-multibody-dynamics-simulation`,
+  `awesome-graphics-libraries`, `awesome-robotics-simulation`,
   `awesome-projects`, and `awesome-robotics`.
 - All private repositories now use the same generated README, issue template,
   PR template, Dependabot, link-check, README protection, and validation

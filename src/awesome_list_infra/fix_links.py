@@ -61,7 +61,8 @@ def get_unfixable(report: dict, fixed_urls: set[str]) -> dict[str, list[dict]]:
 # end is punctuation (end of a sentence, a flow-YAML separator), not URL.
 URL_CONTINUES = r"(?![A-Za-z0-9_\-~%!$&*+;=:@/?#(]|[.,](?=[^\s\]}]))"
 # Nor does a match start inside another URL, e.g. https://web.archive.org/web/2020/https://old.example.
-URL_STARTS = r"(?<![A-Za-z0-9_\-~%!$&*+;=@/?#.])"  # not ":", which "[ref]:url" puts before a URL
+# A Markdown reference definition ("[ref]:url") is the one place a URL may follow a colon.
+URL_STARTS = r"(?:(?<=\]:)|(?<![A-Za-z0-9_\-~%!$&*+;=:@/?#.]))"
 
 
 def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:

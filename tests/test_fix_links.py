@@ -67,6 +67,11 @@ class ApplyFixesSafetyTest(unittest.TestCase):
             (root / "README.md").write_text("[ref]:http://old.example/a\n", encoding="utf-8")
             apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
             self.assertEqual((root / "README.md").read_text(encoding="utf-8"), "[ref]:https://new.example/a\n")
+            proxied = "https://proxy.example/redirect:http://old.example/a"  # a colon inside another URL
+            (root / "README.md").write_text(f"* [A](http://old.example/a) and {proxied}\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual((root / "README.md").read_text(encoding="utf-8"),
+                             f"* [A](https://new.example/a) and {proxied}\n")
 
     def test_a_fix_that_applies_nowhere_is_reported(self):
         import json

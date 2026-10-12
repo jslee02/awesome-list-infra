@@ -819,6 +819,7 @@ class ManualReviewTest(unittest.TestCase):
 
     def setUp(self):
         triage.load_categories([("slam", "SLAM & State Estimation", ""), ("papers", "Papers", "")], ["papers"])
+        triage.REPO_NAMES.clear()  # names looked up in this "run" only
 
     def tearDown(self):
         triage.load_categories([("kinematics-dynamics", "Kinematics & Dynamics", ""), ("simulators", "Simulators", ""),
@@ -858,7 +859,8 @@ class ManualReviewTest(unittest.TestCase):
         a = {"name": "A", "url": "https://arxiv.org/abs/1", **gitlab}
         b = {"name": "B", "url": "https://arxiv.org/abs/2", **gitlab}
         self.assertNotEqual(triage.resource_keys(a), triage.resource_keys(b))  # shared code isn't the paper
-        self.assertEqual(triage.resource_keys({"name": "C", "github": "o/r", "_meta": {"id": 7}}), {"id:7"})
+        self.assertEqual(triage.resource_keys({"name": "C", "github": "o/r", "_meta": {"id": 7}}),
+                         {"id:7", triage.url_key("https://github.com/o/r")})  # the slug matches ID-less entries
 
     def test_github_pages_deeper_than_the_repository_are_kept(self):
         paper = self.paper()
@@ -945,6 +947,26 @@ class ManualReviewTest(unittest.TestCase):
             info = triage.fetch_repo("o/r", outside=False)
         outside.assert_not_called()
         self.assertEqual((info.outside, info.outside_complete), (0, True))
+
+    def test_a_nested_page_under_an_old_name_keys_by_id(self):
+        paper = self.paper()
+        paper.repo, paper.url = "old/name", "https://github.com/old/name/blob/main/paper.pdf"
+        entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
+        self.assertEqual(triage.resource_keys(entry, [paper.repo]), {"id:7/blob/main/paper.pdf"})
+
+    def test_an_id_less_listed_entry_matches_by_slug(self):
+        listed = {}
+        listed |= dict.fromkeys(triage.resource_keys({"name": "P", "github": "o/r"}), "P (Papers)")  # no _meta.id yet
+        paper = self.paper("Cited")
+        paper.repo, paper.url = "o/r", ""
+        d = triage.decide(paper, repo(full_name="o/r", id=7), ctx(listed=listed))
+        self.assertEqual((d.close, d.labels), (True, {"duplicate"}))
+
+    def test_malformed_reply_links_dont_abort(self):
+        self.assertIsNone(triage.github_repo_root("https://["))
+        self.assertFalse(triage.on_github("https://["))
+        s = triage.parse_issue("[Suggestion] x", "", TODAY, ["See https://[ for details"])
+        self.assertIsInstance(s.url, str)
 
     def test_a_paper_naming_a_missing_repository_asks_for_it(self):
         d = triage.decide(self.paper("Cited"), None, ctx())

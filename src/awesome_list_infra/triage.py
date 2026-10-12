@@ -399,7 +399,7 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
     if s.repo is None or (manual and r):
         # Judge the links the entry would actually get (unsafe ones are dropped), including the
         # repository of a paper or book that has one.
-        if same := (resource_keys(build_entry(s, r, None, manual=True)[0]) if manual
+        if same := (resource_keys(build_entry(s, r, None, manual=True)[0], [s.repo] if s.repo else []) if manual
                     else entry_keys(build_entry(s, None, None)[0])):
             if listed := next((ctx.listed[k] for k in same if k in ctx.listed), None):
                 return already_listed(listed)
@@ -502,9 +502,18 @@ def pick_description(submitted: str, about: str) -> tuple[str, bool]:
     return (s + ".", True) if s else ("", True)
 
 
+def split_url(url: str) -> urllib.parse.SplitResult | None:
+    """The URL's parts, or None for one too malformed to parse (e.g. "https://[")."""
+    try:
+        return urllib.parse.urlsplit(url or "")
+    except ValueError:
+        return None
+
+
 def github_repo_of(url: str) -> str | None:
     """"owner/repo", lowercased, of any URL into a GitHub repository (its root or deeper); else None."""
-    parts = urllib.parse.urlsplit(url)
+    if not (parts := split_url(url)):
+        return None
     path = parts.path.strip("/").lower().split("/")
     if (parts.hostname or "").removeprefix("www.") == "github.com" and len(path) >= 2 and all(path[:2]):
         return f"{path[0]}/{path[1].removesuffix('.git')}"
@@ -514,7 +523,8 @@ def github_repo_of(url: str) -> str | None:
 def github_repo_root(url: str) -> str | None:
     """"owner/repo", lowercased, if the URL is a GitHub repository's root however spelled (scheme,
     www., trailing slash, .git, query, fragment); None for any other URL, a deeper page included."""
-    parts = urllib.parse.urlsplit(url)
+    if not (parts := split_url(url)):
+        return None
     path = parts.path.strip("/").removesuffix(".git").lower().split("/")
     if (parts.hostname or "").removeprefix("www.") == "github.com" and len(path) == 2 and all(path):
         return "/".join(path)
@@ -522,7 +532,7 @@ def github_repo_root(url: str) -> str | None:
 
 
 def on_github(url: str) -> bool:
-    return (urllib.parse.urlsplit(url).hostname or "") in ("github.com", "www.github.com")
+    return ((parts := split_url(url)) is not None and (parts.hostname or "") in ("github.com", "www.github.com"))
 
 
 def squash(text: str) -> str:
@@ -599,14 +609,14 @@ def url_key(url: str) -> str:
     return f"url:{p.netloc.lower().removeprefix('www.').removesuffix(default_port)}{rest}"
 
 
-def resource_keys(e: dict) -> set[str]:
+def resource_keys(e: dict, aliases=()) -> set[str]:
     """How a resource reviewed by hand (a paper, a book) is identified: by its own URL; without one,
     by its code links elsewhere; without those, by its GitHub repository (its ID when known, which
     survives renames). Code isn't the resource while it has a page of its own: two papers can share
     a repository, and a paper's code may also be listed as a library."""
     if e.get("url"):
         repo, repo_id = github_repo_of(e["url"]), (e.get("_meta") or {}).get("id")
-        if repo_id and repo and repo == (e.get("github") or "").lower():
+        if repo_id and repo and repo in {name.lower() for name in (e.get("github") or "", *aliases) if name}:
             parts = urllib.parse.urlsplit(e["url"])
             below = "/".join(parts.path.strip("/").split("/")[2:])  # the page's path inside the repository
             return {f"id:{repo_id}/{below}" + (f"?{parts.query}" if parts.query else "")
@@ -616,13 +626,13 @@ def resource_keys(e: dict) -> set[str]:
             e.get("bitbucket") and f"https://bitbucket.org/{e['bitbucket']}"]
     if keys := {url_key(u) for u in code if u}:
         return keys
-    if repo_id := (e.get("_meta") or {}).get("id"):
-        return {f"id:{repo_id}"}
-    return {url_key(f"https://github.com/{e['github']}")} if e.get("github") else set()
+    # The ID survives renames; the slug matches entries recorded before they had an ID.
+    keys = {f"id:{repo_id}"} if (repo_id := (e.get("_meta") or {}).get("id")) else set()
+    return keys | ({url_key(f"https://github.com/{e['github']}")} if e.get("github") else set())
 
 
-def keys_for(e: dict, category: str) -> set[str]:
-    return resource_keys(e) if category in MANUAL_REVIEW else entry_keys(e)
+def keys_for(e: dict, category: str, aliases=()) -> set[str]:
+    return resource_keys(e, aliases) if category in MANUAL_REVIEW else entry_keys(e)
 
 
 def listed_repos() -> dict[str, str]:
@@ -756,7 +766,7 @@ def suggestion_keys(s: Suggestion, repo_id: int | None) -> set[str]:
         name = REPO_NAMES.get(repo_id, s.repo)  # the current name: the PR's entry drops that root URL too
         if entry.get("url") and github_repo_root(entry["url"]) == name.lower():
             del entry["url"]
-        return resource_keys({**entry, "github": name, "_meta": {"id": repo_id}})
+        return resource_keys({**entry, "github": name, "_meta": {"id": repo_id}}, [s.repo])
     if repo_id:
         return {f"id:{repo_id}"}
     return entry_keys(build_entry(s, None, None)[0]) if s.repo is None else set()
@@ -966,7 +976,8 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
     regenerate = None
     fresh_main()
     listed = listed_repos()
-    if keys_for(entry, target[0]) & listed.keys() if target[0] in MANUAL_REVIEW or not r else listed_as(listed, r):
+    aliases = [s.repo] if s.repo else []
+    if keys_for(entry, target[0], aliases) & listed.keys() if target[0] in MANUAL_REVIEW or not r else listed_as(listed, r):
         # another entry PR merged meanwhile
         return LISTED
     prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:{branch}")
@@ -993,7 +1004,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
         "", decision, "",
         "**Review:** in scope? Right category? Name and description in house style?",
         *([""] + [f"- ⚠️ {f}" for f in flags] if flags else []),
-        "", marker, f"<!-- keys {' '.join(sorted(keys_for(entry, target[0])))} -->", f"Closes #{number}",
+        "", marker, f"<!-- keys {' '.join(sorted(keys_for(entry, target[0], aliases)))} -->", f"Closes #{number}",
     ])
     title = f"content: add {entry['name']}"
     if regenerate:

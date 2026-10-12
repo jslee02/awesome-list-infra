@@ -627,12 +627,15 @@ def resource_keys(e: dict, aliases=()) -> set[str]:
     a repository, and a paper's code may also be listed as a library."""
     if e.get("url"):
         repo, repo_id = github_repo_of(e["url"]), (e.get("_meta") or {}).get("id")
-        if repo_id and repo and repo in {name.lower() for name in (e.get("github") or "", *aliases) if name}:
+        names = {name.lower() for name in (e.get("github") or "", *aliases) if name}
+        if repo and repo in names:
             parts = urllib.parse.urlsplit(e["url"])
             below = "/".join(parts.path.strip("/").split("/")[2:])
-            if below:  # a page inside the repository: its path (and anchor) under the repository's ID survives renames
-                rest = (f"?{parts.query}" if parts.query else "") + (f"#{parts.fragment}" if parts.fragment else "")
-                return {url_key(e["url"]), f"id:{repo_id}/{below}{rest}"}
+            if below:  # a page inside the repository: the same page under each of its names, and under
+                # its ID (when known), which survives renames
+                below += (f"?{parts.query}" if parts.query else "") + (f"#{parts.fragment}" if parts.fragment else "")
+                keys = {url_key(e["url"])} | {url_key(f"https://github.com/{name}/{below}") for name in names}
+                return keys | ({f"id:{repo_id}/{below}"} if repo_id else set())
             # The repository's root (with any query or fragment): identified like a resource with no
             # page of its own.
         else:
@@ -811,11 +814,13 @@ def peer_keys(issues: list[dict]) -> dict[int, set[str]]:
             replies = [c["body"] for c in paged(f"/repos/{REPO}/issues/{i['number']}/comments")
                        if c["user"]["login"] == i["user"]["login"]]
             s = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies)
-            if repo_id is None:
-                found = repo_ids(s.reply_repos)
-                if reply_repo := next((slug for slug in s.reply_repos if found.get(slug)), None):  # newest first
+            if repo_id is None:  # as its own triage does: the repository named (in the body, else the
+                # newest reply); only if it's missing, the newest existing one in the replies replaces it
+                found = repo_ids([slug for slug in (s.repo, *s.reply_repos) if slug])
+                repo_id = found.get(s.repo)
+                if repo_id is None and (reply_repo := next((x for x in s.reply_repos if found.get(x)), None)):
                     repo_id = found[reply_repo]
-                    correct_repository(s, reply_repo)  # as its own triage does
+                    correct_repository(s, reply_repo)
         result[i["number"]] = suggestion_keys(s, repo_id)
     return result
 

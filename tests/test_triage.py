@@ -970,6 +970,25 @@ class ManualReviewTest(unittest.TestCase):
         self.assertIn("id:7/wiki/Papers#paper-a", keys("https://github.com/o/new/wiki/Papers#paper-a", "o/new"))
         self.assertIn("id:7/blob/main/p.pdf?raw=true", keys("https://github.com/o/r/blob/main/p.pdf?raw=true"))
 
+    def test_an_id_less_page_matches_a_suggestion_under_the_old_name(self):
+        listed = dict.fromkeys(triage.resource_keys(
+            {"name": "P", "url": "https://github.com/old/name/blob/main/p.pdf", "github": "old/name"}), "P (Papers)")
+        paper = self.paper()
+        paper.repo, paper.url = "old/name", "https://github.com/old/name/blob/main/p.pdf"
+        entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
+        self.assertTrue(triage.resource_keys(entry, [paper.repo]) & listed.keys())
+
+    def test_peers_keep_a_page_their_reply_gives_with_its_repository(self):
+        from unittest import mock
+        author = {"login": "someone"}
+        body = NEW_FORM.format(box="X").replace("SLAM & State Estimation", "Papers").replace(
+            "https://github.com/manankharwar/fusioncore", "_No response_").replace("manankharwar/fusioncore", "_No response_")
+        peer = {"number": 10, "title": "[Suggestion] x", "body": body, "user": author}
+        replies = [{"user": author, "body": "URL: https://github.com/o/r/blob/main/p.pdf"}]
+        with mock.patch.object(triage, "paged", return_value=replies), \
+                mock.patch.object(triage, "repo_ids", side_effect=lambda slugs: {x: 7 for x in slugs}):
+            self.assertIn("id:7/blob/main/p.pdf", triage.peer_keys([peer])[10])
+
     def test_a_page_in_another_repository_keeps_its_url(self):
         paper = self.paper()
         paper.repo, paper.url = "author/code", "https://github.com/author/papers/blob/main/paper.pdf"

@@ -222,9 +222,6 @@ class RegenerationTest(unittest.TestCase):
             self.assertEqual(reverted_fixes(applied, root), ["http://old.example/cc0"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class RedirectFixesTest(unittest.TestCase):
     def test_only_respellings_and_repository_renames_are_followed(self):
@@ -256,3 +253,7 @@ class RedirectFixesTest(unittest.TestCase):
         report = {"redirect_map": {"README.md": [{"url": "http://a.example/x", "status": {
             "redirects": {"redirects": [{"url": "https://www.a.example/x/", "code": 301}]}}}]}}
         self.assertEqual(get_redirect_fixes(report), ({"http://a.example/x": "https://www.a.example/x/"}, {}))
+
+
+if __name__ == "__main__":
+    unittest.main()

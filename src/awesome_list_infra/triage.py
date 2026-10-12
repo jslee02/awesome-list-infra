@@ -398,9 +398,10 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
     target = category_target(s.category)
     manual = bool(target and target[0] in MANUAL_REVIEW)
     if manual and s.url and not safe_url(s.url):
+        # A reply's bare repository link reads as naming the repository, so the reply says "URL:".
         return Decision("question", "I couldn't use the link given. Please put a plain `https://` URL for the "
                         "resource itself, without spaces, quotes, or parentheses, in the **URL** field (edit the "
-                        "issue), or reply with it.", {"question"})
+                        "issue), or reply with `URL: ` followed by it.", {"question"})
     if s.repo is None or (manual and r):
         # Judge the links the entry would actually get (unsafe ones are dropped), including the
         # repository of a paper or book that has one.

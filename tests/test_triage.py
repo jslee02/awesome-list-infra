@@ -916,6 +916,7 @@ class ManualReviewTest(unittest.TestCase):
         d = triage.decide(paper, repo(id=7), ctx(pick=True))
         self.assertEqual((d.state, d.target), ("question", None))
         self.assertIn("couldn't use the link", d.message)
+        self.assertIn("reply with `URL: `", d.message)  # a bare repository link would read as the repository
         paper.repo, paper.alt_repo = None, "https://gitlab.com/group/code"  # code elsewhere can't stand in either
         d = triage.decide(paper, None, ctx(pick=True))
         self.assertEqual((d.state, d.target), ("question", None))

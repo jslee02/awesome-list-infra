@@ -241,7 +241,7 @@ def format_stars(count: int) -> str:
     return str(count)
 
 
-def activity_emoji(entry: dict[str, Any]) -> str:
+def activity_emoji(entry: dict[str, Any], today: date | None = None) -> str:
     if entry.get("archived") or (entry.get("_meta") or {}).get("archived"):
         return "💀"
 
@@ -254,7 +254,7 @@ def activity_emoji(entry: dict[str, Any]) -> str:
     except (TypeError, ValueError):
         return ""
 
-    days_ago = (date.today() - commit_date).days
+    days_ago = ((today or date.today()) - commit_date).days
     if days_ago <= 365:
         return "🟢"
     if days_ago <= 730:
@@ -274,10 +274,10 @@ def code_link(entry: dict[str, Any]) -> tuple[str, str] | None:
     return None
 
 
-def render_entry(entry: dict[str, Any]) -> str:
+def render_entry(entry: dict[str, Any], today: date | None = None) -> str:
     indent = "  " * int(entry.get("_indent", 0) or 0)
     parts = [f"{indent}*"]
-    emoji = activity_emoji(entry)
+    emoji = activity_emoji(entry, today)
     if emoji:
         parts.append(emoji)
 
@@ -301,9 +301,9 @@ def render_entry(entry: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def render_content_item(item: Any) -> str:
+def render_content_item(item: Any, today: date | None = None) -> str:
     if isinstance(item, dict):
-        return render_entry(item)
+        return render_entry(item, today)
     return str(item)
 
 
@@ -319,7 +319,7 @@ def has_activity_metadata(sections: list[dict[str, Any]]) -> bool:
     return any(activity_emoji(entry) for entry in iter_entries(sections))
 
 
-def render_section(section: dict[str, Any], level: int = 2) -> list[str]:
+def render_section(section: dict[str, Any], level: int = 2, today: date | None = None) -> list[str]:
     title = section["title"]
     if level == 2:
         lines = [f"## [{title}](#contents)", ""]
@@ -328,12 +328,21 @@ def render_section(section: dict[str, Any], level: int = 2) -> list[str]:
 
     content = normalize_content_items(list(section.get("content") or []))
     if content:
-        lines.extend(render_content_item(item) for item in content)
+        lines.extend(render_content_item(item, today) for item in content)
         lines.append("")
 
     for child in section.get("sections") or []:
-        lines.extend(render_section(child, min(level + 1, 6)))
+        lines.extend(render_section(child, min(level + 1, 6), today))
     return lines
+
+
+def as_of(data: dict[str, Any]) -> date | None:
+    """The date activity is measured against: the last metadata refresh, so regenerating the
+    README on another day gives the same result. None (today) before the first refresh."""
+    try:
+        return date.fromisoformat(str(data["as_of"]))
+    except (KeyError, ValueError):
+        return None
 
 
 def render_readme(config: dict[str, Any], data: dict[str, Any]) -> str:
@@ -366,7 +375,7 @@ def render_readme(config: dict[str, Any], data: dict[str, Any]) -> str:
             )
 
     for section in sections:
-        lines.extend(render_section(section))
+        lines.extend(render_section(section, today=as_of(data)))
 
     lines.extend(
         [
@@ -569,9 +578,7 @@ def fetch_repo_metadata(owner_repo: str) -> dict[str, Any] | None:
         try:
             last_commit = fetch_default_branch_commit_date(owner_repo, default_branch, token)
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
-            pass
-    if not last_commit and data.get("pushed_at"):
-        last_commit = data["pushed_at"][:10]
+            pass  # update_metadata keeps the last known date; pushed_at counts pushes to any branch
     if last_commit:
         meta["last_commit"] = last_commit
 
@@ -601,6 +608,9 @@ def update_metadata(data: dict[str, Any], dry_run: bool = False) -> tuple[int, i
         print(f"  {github}...", end=" ", flush=True)
         meta = fetch_repo_metadata(github)
         if meta:
+            previous = entry.get("_meta") or {}
+            if "last_commit" not in meta and previous.get("last_commit"):
+                meta["last_commit"] = previous["last_commit"]  # the commit lookup failed this time
             if not dry_run:
                 entry["_meta"] = meta
             updated += 1
@@ -629,6 +639,7 @@ def fetch_metadata_main(argv: list[str] | None = None) -> int:
 
     total, updated = update_metadata(data, dry_run=args.dry_run)
     if not args.dry_run and updated:
+        data["as_of"] = date.today().isoformat()  # the date activity badges are measured against
         write_yaml(data_path, data)
     print(f"Done: {updated}/{total} entries updated")
     if args.dry_run:

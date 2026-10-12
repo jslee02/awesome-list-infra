@@ -171,7 +171,7 @@ jobs:
               marker,
               `Thanks for taking the time to suggest **${names}**.`,
               '',
-              'New resources are submitted through the **Suggest a Resource** issue form instead of direct pull requests. That form lets the automation evaluate the resource, apply the right labels, and create the YAML/README PR automatically when the suggestion is accepted.',
+              'New resources are submitted through the **Suggest a Resource** issue form instead of direct pull requests, so every suggestion is evaluated the same way.',
               '',
               `Please resubmit this resource here: ${suggestionUrl}`,
               '',

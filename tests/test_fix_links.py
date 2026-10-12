@@ -241,6 +241,8 @@ class RedirectFixesTest(unittest.TestCase):
             "http://www.cimne.com/kratos/": "https://cimne.com/wp-content/uploads/2026/03/kratos.png",
             "http://www.sim.informatik.tu-darmstadt.de/res/sw/mbslib": "https://www.sim.informatik.tu-darmstadt.deres/sw/mbslib",
             "https://klampt.org/": "http://klampt.org/",
+            "https://example.org/list": "https://github.com/sindresorhus/awesome-nodejs",
+            "https://github.com/b/tool": "https://github.com/login-bot/tool/wiki",
         }
         report = {"redirect_map": {"README.md": [
             {"origin": old, "redirects": [{"url": new, "code": 301}]} for old, new in moves.items()]}}

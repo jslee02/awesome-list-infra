@@ -391,8 +391,8 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
             return Decision("question", f"{why}Before I can evaluate this suggestion, please:\n\n"
                             + "\n".join(f"- {a}" for a in asks), {"question"})
     target = category_target(s.category)
-    manual = bool(target and target[0] in MANUAL_REVIEW and r)
-    if s.repo is None or manual:
+    manual = bool(target and target[0] in MANUAL_REVIEW)
+    if s.repo is None or (manual and r):
         # Judge the links the entry would actually get (unsafe ones are dropped), including the
         # repository of a paper or book that has one.
         if same := (resource_keys(build_entry(s, r, None, manual=True)[0]) if manual
@@ -498,6 +498,16 @@ def pick_description(submitted: str, about: str) -> tuple[str, bool]:
     return (s + ".", True) if s else ("", True)
 
 
+def github_repo_root(url: str) -> str | None:
+    """"owner/repo", lowercased, if the URL is a GitHub repository's root however spelled (scheme,
+    www., trailing slash, .git, query, fragment); None for any other URL, a deeper page included."""
+    parts = urllib.parse.urlsplit(url)
+    path = parts.path.strip("/").removesuffix(".git").lower().split("/")
+    if (parts.hostname or "").removeprefix("www.") == "github.com" and len(path) == 2 and all(path):
+        return "/".join(path)
+    return None
+
+
 def on_github(url: str) -> bool:
     return (urllib.parse.urlsplit(url).hostname or "") in ("github.com", "www.github.com")
 
@@ -518,16 +528,16 @@ def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None,
     if r and not manual and squash(repo_name) not in squash(entry["name"]) \
             and squash(entry["name"]) not in squash(repo_name):
         flags.append(f"Name `{entry['name']}` differs from the repository name `{repo_name}`; check spelling.")
-    repo_root = f"https://github.com/{r.full_name if r else s.repo}".lower() if r or s.repo else ""
-    if manual:
-        candidates = [u for u in [safe_url(s.url)] if u and u.lower().rstrip("/").removesuffix(".git") != repo_root]
+    if manual:  # the named repository's root, under any name it has had, is the github field
+        same_repo = {name.lower() for name in (r.full_name if r else None, s.repo) if name}
+        candidates = [u for u in [safe_url(s.url)] if u and github_repo_root(u) not in same_repo]
     else:
         candidates = [u for u in map(safe_url, (s.url, r.homepage) if r else (s.url,)) if u and not (r and on_github(u))]
     if url := next(iter(candidates), ""):
         entry["url"] = url
     if r:
         entry["github"] = r.full_name
-    elif alt := safe_url(s.alt_repo):
+    elif not (manual and s.repo) and (alt := safe_url(s.alt_repo)):
         host = re.match(r"https?://(gitlab\.com|bitbucket\.org)/([^?#]+?)/?(?:[?#]|$)", alt)
         if host:
             path = host[2].removesuffix(".git")
@@ -714,8 +724,11 @@ def suggestion_keys(s: Suggestion, repo_id: int | None) -> set[str]:
     GitHub, its source and website; for a resource reviewed by hand, its own links (`resource_keys`);
     nothing if its repository doesn't exist."""
     target = category_target(s.category)
-    if repo_id and target and target[0] in MANUAL_REVIEW:
-        return resource_keys({**build_entry(s, None, None, manual=True)[0], "github": s.repo, "_meta": {"id": repo_id}})
+    if target and target[0] in MANUAL_REVIEW:
+        if s.repo and not repo_id:
+            return set()  # a named repository that doesn't exist: nothing to compare yet
+        entry = build_entry(s, None, None, manual=True)[0]
+        return resource_keys({**entry, "github": s.repo, "_meta": {"id": repo_id}} if repo_id else entry)
     if repo_id:
         return {f"id:{repo_id}"}
     return entry_keys(build_entry(s, None, None)[0]) if s.repo is None else set()

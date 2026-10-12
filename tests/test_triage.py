@@ -877,6 +877,29 @@ class ManualReviewTest(unittest.TestCase):
         self.assertNotIn("url", entry)
         self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(entry))  # {"id:7"}, rename-proof
 
+    def test_a_paper_without_github_is_still_its_own_page(self):
+        paper = self.paper("Cited")
+        paper.repo, paper.url, paper.alt_repo = None, "https://arxiv.org/abs/1", "https://gitlab.com/group/code"
+        code_listed = {triage.url_key("https://gitlab.com/group/code"): "Code (SLAM & State Estimation)"}
+        self.assertEqual(triage.decide(paper, None, ctx(listed=code_listed)).state, "needs-review")
+        self.assertEqual(triage.suggestion_keys(paper, None), {triage.url_key("https://arxiv.org/abs/1")})
+
+    def test_repository_roots_however_spelled(self):
+        for url in ("http://www.github.com/O/R.git", "https://github.com/o/r/", "https://github.com/o/r#readme"):
+            self.assertEqual(triage.github_repo_root(url), "o/r", url)
+        self.assertIsNone(triage.github_repo_root("https://github.com/o/r/blob/main/paper.pdf"))
+        paper = self.paper()
+        paper.repo, paper.url = "old/name", "https://github.com/OLD/name"  # renamed since: still its root
+        entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
+        self.assertNotIn("url", entry)
+
+    def test_pending_keys_ignore_a_mirror_when_github_is_named(self):
+        paper = self.paper()
+        paper.url, paper.alt_repo = "", "https://gitlab.com/mirror/code"
+        r = repo(full_name="manankharwar/fusioncore", id=7)
+        pr_entry, _ = triage.build_entry(paper, r, None, manual=True)
+        self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(pr_entry))
+
     def test_a_paper_naming_a_missing_repository_asks_for_it(self):
         d = triage.decide(self.paper("Cited"), None, ctx())
         self.assertEqual(d.state, "question")

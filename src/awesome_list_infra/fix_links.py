@@ -351,7 +351,8 @@ def verify_after_regeneration(applied_path: Path, root: Path, out_dir: Path) -> 
         report = out_dir / "unfixed-links.md"
         lines = [
             "### Restored by the README generator\n",
-            "These links come from the generator itself, so fix them there:\n",
+            "The generator writes these links itself or builds them from a data field (such as a `github` "
+            "slug), so fix them there:\n",
             *(f"- [ ] {old} -> {applied[old]}" for old in reverted),
             "",
         ]

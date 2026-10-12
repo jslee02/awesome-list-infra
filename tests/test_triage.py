@@ -907,6 +907,13 @@ class ManualReviewTest(unittest.TestCase):
         pr_entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
         self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(pr_entry))  # {"id:7"}
 
+    def test_an_unusable_page_link_is_asked_for_again(self):
+        paper = self.paper("Cited")
+        paper.url = "https://en.wikipedia.org/wiki/Tool_(robotics)"
+        d = triage.decide(paper, repo(id=7), ctx(pick=True))
+        self.assertEqual((d.state, d.target), ("question", None))
+        self.assertIn("couldn't use the link", d.message)
+
     def test_a_paper_naming_a_missing_repository_asks_for_it(self):
         d = triage.decide(self.paper("Cited"), None, ctx())
         self.assertEqual(d.state, "question")

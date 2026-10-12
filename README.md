@@ -166,8 +166,8 @@ directly.
 ### Triage Suggestions
 
 Applies an acceptance bar to `Suggest a Resource` issues and opens entry PRs.
-Currently used by awesome-robotics-libraries, whose `CONTRIBUTING.md` documents
-the policy: gates on repository age, stars, outside issue/PR authors, recent
+Used by awesome-robotics-libraries, awesome-collision-detection, and
+awesome-entity-component-system, whose `CONTRIBUTING.md` files document the policy: gates on repository age, stars, outside issue/PR authors, recent
 commits, and license; a 1,000-star fast lane; a monitoring pod for near misses;
 one open suggestion per person; human confirmation and affiliation.
 
@@ -283,10 +283,10 @@ the result, and opens a signed-off maintenance PR only when expected metadata
 or README files changed. By default it stages `README.md` and the `data`
 directory.
 
-PRs opened with the default `GITHUB_TOKEN` trigger no `pull_request` CI at
-all. To have maintenance PRs run CI, add a repository secret named
-`CREATE_PR_TOKEN` containing a fine-grained bot token or GitHub App token with
-`contents: write` and `pull-requests: write`. The workflow falls back to
+CI on PRs opened with the default `GITHUB_TOKEN` may wait for a maintainer to
+approve the run. To skip that, add a repository secret named `CREATE_PR_TOKEN`
+containing a fine-grained bot token or GitHub App token with `contents: write`
+and `pull-requests: write`. The workflow falls back to
 `GITHUB_TOKEN` when that secret is not present. Map only this secret in caller
 workflows so unrelated repository secrets are not exposed to the reusable
 workflow.

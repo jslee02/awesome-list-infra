@@ -404,7 +404,7 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
                                 target=target)
             if not s.evidence and not ctx.pick:
                 return Decision("question", "This resource is not on GitHub, so a maintainer reviews it by hand, "
-                                "looking for wide use in robotics. Please add **Evidence of use** (edit the issue), "
+                                "looking for wide use. Please add **Evidence of use** (edit the issue), "
                                 "or reply starting with `Evidence:`, for example independent users or customers, "
                                 "citations, or third-party tutorials.", {"question"})
             return Decision("needs-review", "This resource is not on GitHub, so a maintainer will review it by hand.",
@@ -599,7 +599,7 @@ def api(method: str, path: str, body: dict | None = None, token: str | None = No
         headers={
             "Authorization": f"Bearer {token or os.environ['GITHUB_TOKEN']}",
             "Accept": "application/vnd.github+json",
-            "User-Agent": "awesome-robotics-libraries-triage",
+            "User-Agent": "awesome-list-triage",
         },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:

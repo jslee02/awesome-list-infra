@@ -806,5 +806,13 @@ class AddEntryTest(unittest.TestCase):
         self.assertEqual(self.added(["Survey", "Alpha"]), ["Survey", "Alpha", "Mid"])
 
 
+class CitationNameTest(unittest.TestCase):
+    def test_a_citation_name_is_kept_whole(self):
+        citation = ("A Ray Intersection Algorithm for Fast Growth Distance Computation Between Convex Sets "
+                    "(2026), A. Thirugnanam and K. Sreenath")
+        body = NEW_FORM.format(box="X").replace("FusionCore", citation)
+        self.assertEqual(triage.parse_issue("[Suggestion] x", body, TODAY).name, citation)
+
+
 if __name__ == "__main__":
     unittest.main()

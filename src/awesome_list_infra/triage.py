@@ -240,8 +240,9 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
     title_name = re.sub(r"^\s*(\[suggestion\]|(suggest(ion)?|add)\b:?)\s*", "", title or "", flags=re.I)
     return Suggestion(
         # Names never need URLs; dropping them keeps URL-form closing references out of commits.
+        # Long enough for a paper or book citation, which some lists use as the name.
         name=clean_text(re.sub(r"\S*://\S*", "", fields.get("resource name") or kv.get("name")
-                               or title_name.split("—")[0]), 60),
+                               or title_name.split("—")[0]), 200),
         repo=(repo_in_field(fields.get("github repository", ""))
               or repo_in_field(kv.get("github", ""))
               or repo_in_text(fields.get("url", "") or kv.get("url", ""))

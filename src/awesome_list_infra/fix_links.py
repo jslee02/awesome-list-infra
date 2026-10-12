@@ -35,11 +35,14 @@ def same_place(old: str, new: str) -> bool:
             and old_path[3:] == new_path[3:])
 
 
-# Redirects that need no one: GitHub sends anonymous visitors of an issue form to sign in, and the
-# awesome badge's link goes on to the awesome list itself.
+# Redirects that need no one: GitHub sends anonymous visitors of an issue form to sign in, the
+# awesome badge's link goes on to the awesome list itself, and the shared README generator links
+# CC0 over http (a fix would only drift from it in lists that don't regenerate after fixing).
 EXPECTED_REDIRECTS = [
     (re.compile(r"https://github\.com/[^/]+/[^/]+/issues/new\b"), re.compile(r"https://github\.com/login\?")),
     (re.compile(r"https?://awesome\.re/?$"), re.compile(r"https://github\.com/sindresorhus/awesome/?$")),
+    (re.compile(r"http://creativecommons\.org/publicdomain/zero/1\.0/$"),
+     re.compile(r"https://creativecommons\.org/publicdomain/zero/1\.0/$")),
 ]
 
 

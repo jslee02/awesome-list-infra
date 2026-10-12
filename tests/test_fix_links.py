@@ -244,7 +244,9 @@ class RedirectFixesTest(unittest.TestCase):
         }
         report = {"redirect_map": {"README.md": [
             {"origin": old, "redirects": [{"url": new, "code": 301}]} for old, new in moves.items()]
-            + [{"origin": "https://awesome.re", "redirects": [{"url": "https://github.com/sindresorhus/awesome", "code": 302}]}]}}
+            + [{"origin": "https://awesome.re", "redirects": [{"url": "https://github.com/sindresorhus/awesome", "code": 302}]},
+               {"origin": "http://creativecommons.org/publicdomain/zero/1.0/",
+                "redirects": [{"url": "https://creativecommons.org/publicdomain/zero/1.0/", "code": 302}]}]}}
         fixes, moved = get_redirect_fixes(report)
         self.assertEqual(fixes, dict(list(moves.items())[:4]))
         # Left for a person, except GitHub's sign-in wall.

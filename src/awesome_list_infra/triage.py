@@ -624,9 +624,12 @@ def resource_keys(e: dict, aliases=()) -> set[str]:
         if repo_id and repo and repo in {name.lower() for name in (e.get("github") or "", *aliases) if name}:
             parts = urllib.parse.urlsplit(e["url"])
             below = "/".join(parts.path.strip("/").split("/")[2:])  # the page's path inside the repository
-            return {f"id:{repo_id}/{below}" + (f"?{parts.query}" if parts.query else "")
-                    + (f"#{parts.fragment}" if parts.fragment else "")}
-        return {url_key(e["url"])}
+            if below or parts.query or parts.fragment:
+                return {f"id:{repo_id}/{below}" + (f"?{parts.query}" if parts.query else "")
+                        + (f"#{parts.fragment}" if parts.fragment else "")}
+            # The repository's root itself: identified like a resource with no page of its own.
+        else:
+            return {url_key(e["url"])}
     code = [e.get("code_url"), e.get("gitlab") and f"https://gitlab.com/{e['gitlab']}",
             e.get("bitbucket") and f"https://bitbucket.org/{e['bitbucket']}"]
     if keys := {url_key(u) for u in code if u}:
@@ -786,11 +789,15 @@ def peer_keys(issues: list[dict]) -> dict[int, set[str]]:
     result = {}
     for i in issues:
         s, repo_id = parsed[i["number"]], ids.get(parsed[i["number"]].repo)
-        if repo_id is None:  # missing or gone in the body
+        target = category_target(s.category)
+        # Replies matter when the body's repository is missing or gone, and always for a resource
+        # reviewed by hand, whose link a reply can correct ("URL: ...").
+        if repo_id is None or (target and target[0] in MANUAL_REVIEW):
             replies = [c["body"] for c in paged(f"/repos/{REPO}/issues/{i['number']}/comments")
                        if c["user"]["login"] == i["user"]["login"]]
             s = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies)
-            repo_id = next(filter(None, repo_ids(s.reply_repos).values()), None)  # newest first
+            if repo_id is None:
+                repo_id = next(filter(None, repo_ids(s.reply_repos).values()), None)  # newest first
         result[i["number"]] = suggestion_keys(s, repo_id)
     return result
 

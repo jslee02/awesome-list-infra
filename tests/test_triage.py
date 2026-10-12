@@ -974,6 +974,21 @@ class ManualReviewTest(unittest.TestCase):
         s = triage.parse_issue("[Suggestion] x", body, TODAY, ["URL: https://github.com/o/paper"])
         self.assertEqual(s.url, "https://github.com/o/paper")
 
+    def test_a_root_url_is_identified_like_its_repository(self):
+        root = {"name": "P", "url": "https://github.com/o/r", "github": "o/r", "_meta": {"id": 7}}
+        self.assertEqual(triage.resource_keys(root), triage.resource_keys({"name": "P", "github": "o/r", "_meta": {"id": 7}}))
+
+    def test_peers_read_replies_that_correct_a_papers_link(self):
+        from unittest import mock
+        author = {"login": "someone"}
+        body = NEW_FORM.format(box="X").replace("SLAM & State Estimation", "Papers").replace(
+            "https://github.com/manankharwar/fusioncore", "https://en.wikipedia.org/wiki/Tool_(robotics)")
+        peer = {"number": 10, "title": "[Suggestion] x", "body": body, "user": author}
+        replies = [{"user": author, "body": "URL: https://arxiv.org/abs/9"}]
+        with mock.patch.object(triage, "paged", return_value=replies), \
+                mock.patch.object(triage, "repo_ids", side_effect=lambda slugs: {x: 7 for x in slugs}):
+            self.assertEqual(triage.peer_keys([peer]), {10: {triage.url_key("https://arxiv.org/abs/9")}})
+
     def test_malformed_reply_links_dont_abort(self):
         self.assertIsNone(triage.github_repo_root("https://["))
         self.assertFalse(triage.on_github("https://["))

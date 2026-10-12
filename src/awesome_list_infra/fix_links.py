@@ -60,11 +60,13 @@ def get_unfixable(report: dict, fixed_urls: set[str]) -> dict[str, list[dict]]:
 # contain spaces, so "." or "," followed by whitespace, a closing bracket, or the
 # end is punctuation (end of a sentence, a flow-YAML separator), not URL.
 URL_CONTINUES = r"(?![A-Za-z0-9_\-~%!$&*+;=:@/?#(]|[.,](?=[^\s\]}]))"
+# Nor does a match start inside another URL, e.g. https://web.archive.org/web/2020/https://old.example.
+URL_STARTS = r"(?<![A-Za-z0-9_\-~%!$&*+;=:@/?#.])"
 
 
 def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:
     sorted_urls = sorted(fixes.keys(), key=len, reverse=True)
-    return re.compile("(?:" + "|".join(re.escape(url) for url in sorted_urls) + ")" + URL_CONTINUES)
+    return re.compile(URL_STARTS + "(?:" + "|".join(re.escape(url) for url in sorted_urls) + ")" + URL_CONTINUES)
 
 
 def read_text(path: Path) -> str:

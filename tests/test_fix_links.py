@@ -41,6 +41,15 @@ class ApplyFixesTest(unittest.TestCase):
 
 
 class ApplyFixesSafetyTest(unittest.TestCase):
+    def test_a_url_inside_another_url_is_left_alone(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archived = "https://web.archive.org/web/2020/http://old.example/a"
+            (root / "README.md").write_text(f"* [A](http://old.example/a)\n* [B]({archived})\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual((root / "README.md").read_text(encoding="utf-8"),
+                             f"* [A](https://new.example/a)\n* [B]({archived})\n")
+
     def test_config_file_is_fixed(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

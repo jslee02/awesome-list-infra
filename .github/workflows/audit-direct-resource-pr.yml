@@ -175,7 +175,9 @@ jobs:
               '',
               `Please resubmit this resource here: ${suggestionUrl}`,
               '',
-              `I am closing this PR because it adds a new resource entry in \`${files}\` and bypasses that submission flow. This is only about keeping contributions consistent; you are welcome to paste the details from this PR into the suggestion issue.`,
+              process.env.CLOSE_PR === 'true'
+                ? `I am closing this PR because it adds a new resource entry in \`${files}\` and bypasses that submission flow. This is only about keeping contributions consistent; you are welcome to paste the details from this PR into the suggestion issue.`
+                : `This PR adds a new resource entry in \`${files}\`, which bypasses that submission flow. You are welcome to paste the details from this PR into the suggestion issue.`,
             ].join('\n');
 
             const comments = await github.paginate(github.rest.issues.listComments, {

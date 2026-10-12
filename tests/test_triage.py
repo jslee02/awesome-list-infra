@@ -167,6 +167,8 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(triage.decide(unchecked, repo(), ctx()).state, "question")
         self.assertEqual(triage.decide(agent, repo(), ctx()).state, "question")
         self.assertEqual(triage.decide(unchecked, repo(), ctx(insider=True)).state, "needs-review")
+        robot_name = triage.parse_issue("[Suggestion] Robot 🤖 Planner", NEW_FORM.format(box="X"), TODAY)
+        self.assertFalse(robot_name.agent)  # only the documented 🤖🤖🤖 tag marks an agent
 
     def test_one_open_suggestion(self):
         d = triage.decide(self.attested, repo(), ctx(other_open=[140]))

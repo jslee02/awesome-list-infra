@@ -243,6 +243,25 @@ class EntryTest(unittest.TestCase):
         desc, trimmed = triage.pick_description(long, "")
         self.assertTrue(trimmed)
         self.assertLessEqual(len(desc), 100)
+        # A cut keeps every word before it and is marked with "…", so it never changes meaning. The cases
+        # come from a real suggestion (FusionCore) and from review.
+        fusioncore = ("ROS 2 UKF fusing GPS, IMU, and wheel odometry with adaptive noise and GPS outlier rejection "
+                      "for robust outdoor localization.")
+        self.assertEqual(triage.pick_description(fusioncore, ""), ("ROS 2 UKF fusing GPS, IMU, and wheel odometry "
+                         "with adaptive noise and GPS outlier rejection for…", True))
+        for kept, rest in (("Rapid built-in", " tools for all"), ("A foundation developers can build on", " top of it"),
+                           ("A panel operators can look at", " during runs"), ("Solvers for robotics and OR", " work"),
+                           ("Tools made for,", " and with, everyone")):
+            prefix = "x" * (98 - len(kept)) + " "  # prefix + kept is exactly 99 characters: the cut falls after it
+            self.assertEqual(triage.pick_description(prefix + kept + rest, ""), (prefix + kept.rstrip(",") + "…", True))
+        word = "x" * 98 + "y"  # a word ending exactly at 99 characters stays, before closing punctuation too
+        for after in (", and more", ',\" said more', ") and more", "— and more", ". plus more"):
+            self.assertEqual(triage.pick_description(word + after, ""), (word + "…", True))
+        self.assertEqual(triage.pick_description("z" * 150, ""), ("z" * 99 + "…", True))  # one overlong token
+        for head, tail in (("2", ".0"), ("1", ",000"), ("https", "://example.com/docs")):
+            prefix = "x" * (90 - len(head)) + " ROS ver "  # the token's inner punctuation sits right at the cut
+            self.assertEqual(triage.pick_description(prefix + head + tail + " and more", ""),
+                             (prefix.rstrip() + "…", True))  # so the token goes whole, never "2…" or "https…"
         self.assertEqual(triage.pick_description("Too short", "Time-indexed storage for robotics data."),
                          ("Time-indexed storage for robotics data.", False))
 

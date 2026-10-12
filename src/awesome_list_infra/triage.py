@@ -622,12 +622,11 @@ def resource_keys(e: dict, aliases=()) -> set[str]:
     if e.get("url"):
         repo, repo_id = github_repo_of(e["url"]), (e.get("_meta") or {}).get("id")
         if repo_id and repo and repo in {name.lower() for name in (e.get("github") or "", *aliases) if name}:
-            parts = urllib.parse.urlsplit(e["url"])
-            below = "/".join(parts.path.strip("/").split("/")[2:])  # the page's path inside the repository
-            if below or parts.query or parts.fragment:
-                return {f"id:{repo_id}/{below}" + (f"?{parts.query}" if parts.query else "")
-                        + (f"#{parts.fragment}" if parts.fragment else "")}
-            # The repository's root itself: identified like a resource with no page of its own.
+            below = "/".join(urllib.parse.urlsplit(e["url"]).path.strip("/").split("/")[2:])
+            if below:  # a page inside the repository: its path under the repository's ID survives renames
+                return {url_key(e["url"]), f"id:{repo_id}/{below}"}
+            # The repository's root (with any query or fragment): identified like a resource with no
+            # page of its own.
         else:
             return {url_key(e["url"])}
     code = [e.get("code_url"), e.get("gitlab") and f"https://gitlab.com/{e['gitlab']}",
@@ -636,7 +635,7 @@ def resource_keys(e: dict, aliases=()) -> set[str]:
         return keys
     # The ID survives renames; the slug matches entries recorded before they had an ID.
     keys = {f"id:{repo_id}"} if (repo_id := (e.get("_meta") or {}).get("id")) else set()
-    return keys | {url_key(f"https://github.com/{name}") for name in (e.get("github"), *aliases) if name}
+    return keys | {url_key(f"https://github.com/{name.lower()}") for name in (e.get("github"), *aliases) if name}
 
 
 def keys_for(e: dict, category: str, aliases=()) -> set[str]:
@@ -780,6 +779,14 @@ def suggestion_keys(s: Suggestion, repo_id: int | None) -> set[str]:
     return entry_keys(build_entry(s, None, None)[0]) if s.repo is None else set()
 
 
+def correct_repository(s: Suggestion, reply_repo: str) -> None:
+    """Take the repository an author's reply supplies for a missing one; a URL into the superseded
+    repository goes too, as it isn't the resource's own page."""
+    if s.url and s.repo and github_repo_of(s.url) == s.repo.lower():
+        s.url = ""
+    s.repo = reply_repo
+
+
 def peer_keys(issues: list[dict]) -> dict[int, set[str]]:
     """Issue number -> `suggestion_keys` as that suggestion's own triage sees it: the body's
     repository if it exists, else the newest existing one in its author's replies, else (with no
@@ -797,7 +804,10 @@ def peer_keys(issues: list[dict]) -> dict[int, set[str]]:
                        if c["user"]["login"] == i["user"]["login"]]
             s = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies)
             if repo_id is None:
-                repo_id = next(filter(None, repo_ids(s.reply_repos).values()), None)  # newest first
+                found = repo_ids(s.reply_repos)
+                if reply_repo := next((slug for slug in s.reply_repos if found.get(slug)), None):  # newest first
+                    repo_id = found[reply_repo]
+                    correct_repository(s, reply_repo)  # as its own triage does
         result[i["number"]] = suggestion_keys(s, repo_id)
     return result
 
@@ -1132,9 +1142,7 @@ def triage(number: int, dry_run: bool) -> str:
     r = fetch_repo(s.repo, outside=gated) if s.repo else None
     for reply_repo in s.reply_repos if r is None else []:  # the author corrected the repository
         if r := fetch_repo(reply_repo, outside=gated):
-            if s.url and s.repo and github_repo_of(s.url) == s.repo.lower():
-                s.url = ""  # a page in the repository the reply corrected, not the resource's own
-            s.repo = reply_repo
+            correct_repository(s, reply_repo)
             break
     # The open suggestion of the same resource first in the queue, so two entry PRs never race
     # to merge; the others close as its duplicates. One batched lookup per run keeps sweeps linear.

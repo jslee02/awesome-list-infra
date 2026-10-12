@@ -923,8 +923,14 @@ class ManualReviewTest(unittest.TestCase):
     def test_github_pages_key_by_repository_id_and_path(self):
         old = {"name": "P", "url": "https://github.com/Old/Name/blob/main/paper.pdf", "github": "Old/Name", "_meta": {"id": 7}}
         new = {"name": "P", "url": "https://github.com/new/name/blob/main/paper.pdf", "github": "new/name", "_meta": {"id": 7}}
-        self.assertEqual(triage.resource_keys(old), {"id:7/blob/main/paper.pdf"})
-        self.assertEqual(triage.resource_keys(old), triage.resource_keys(new))  # a rename keeps the identity
+        self.assertIn("id:7/blob/main/paper.pdf", triage.resource_keys(old))
+        self.assertTrue(triage.resource_keys(old) & triage.resource_keys(new))  # a rename keeps the identity
+        root_with_anchor = {"name": "P", "url": "https://github.com/o/r#readme", "github": "o/r", "_meta": {"id": 7}}
+        self.assertEqual(triage.resource_keys(root_with_anchor), {"id:7", triage.url_key("https://github.com/o/r")})
+        id_less = {"name": "P", "url": "https://github.com/o/r/blob/main/paper.pdf", "github": "o/r"}
+        self.assertTrue(triage.resource_keys(id_less) & triage.resource_keys({**id_less, "_meta": {"id": 7}}))
+        self.assertTrue(triage.resource_keys({"name": "P", "github": "Owner/Repo"})
+                        & triage.resource_keys({"name": "P", "github": "owner/repo", "_meta": {"id": 7}}))
 
     def test_a_reply_naming_only_a_repository_keeps_an_unusable_link_visible(self):
         body = NEW_FORM.format(box="X").replace("SLAM & State Estimation", "Papers").replace(
@@ -953,7 +959,7 @@ class ManualReviewTest(unittest.TestCase):
         paper = self.paper()
         paper.repo, paper.url = "old/name", "https://github.com/old/name/blob/main/paper.pdf"
         entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
-        self.assertEqual(triage.resource_keys(entry, [paper.repo]), {"id:7/blob/main/paper.pdf"})
+        self.assertIn("id:7/blob/main/paper.pdf", triage.resource_keys(entry, [paper.repo]))
 
     def test_an_id_less_listed_entry_matches_by_slug(self):
         listed = {}

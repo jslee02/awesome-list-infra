@@ -239,10 +239,12 @@ class RedirectFixesTest(unittest.TestCase):
             "http://www.sim.informatik.tu-darmstadt.de/res/sw/mbslib": "https://www.sim.informatik.tu-darmstadt.deres/sw/mbslib",
             "https://klampt.org/": "http://klampt.org/",
             "https://example.org/list": "https://github.com/sindresorhus/awesome-nodejs",
+            "https://parked.example/": "https://github.com/sindresorhus/awesome",  # not the awesome badge
             "https://github.com/b/tool": "https://github.com/login-bot/tool/wiki",
         }
         report = {"redirect_map": {"README.md": [
-            {"origin": old, "redirects": [{"url": new, "code": 301}]} for old, new in moves.items()]}}
+            {"origin": old, "redirects": [{"url": new, "code": 301}]} for old, new in moves.items()]
+            + [{"origin": "https://awesome.re", "redirects": [{"url": "https://github.com/sindresorhus/awesome", "code": 302}]}]}}
         fixes, moved = get_redirect_fixes(report)
         self.assertEqual(fixes, dict(list(moves.items())[:4]))
         # Left for a person, except GitHub's sign-in wall.

@@ -37,7 +37,10 @@ def same_place(old: str, new: str) -> bool:
 
 # Redirects that need no one: GitHub sends anonymous visitors of an issue form to sign in, and the
 # awesome badge's link goes on to the awesome list itself.
-EXPECTED_REDIRECT = re.compile(r"https://github\.com/(?:login\?|sindresorhus/awesome/?$)")
+EXPECTED_REDIRECTS = [
+    (re.compile(r"https://github\.com/[^/]+/[^/]+/issues/new\b"), re.compile(r"https://github\.com/login\?")),
+    (re.compile(r"https?://awesome\.re/?$"), re.compile(r"https://github\.com/sindresorhus/awesome/?$")),
+]
 
 
 def get_redirect_fixes(report: dict) -> tuple[dict[str, str], dict[str, str]]:
@@ -53,7 +56,7 @@ def get_redirect_fixes(report: dict) -> tuple[dict[str, str], dict[str, str]]:
             if not isinstance(chain, list):
                 chain = entry.get("status", {}).get("redirects", {}).get("redirects", [])
             final = chain[-1]["url"] if chain else original
-            if final != original and not EXPECTED_REDIRECT.match(final):
+            if final != original and not any(a.match(original) and b.match(final) for a, b in EXPECTED_REDIRECTS):
                 (fixes if same_place(original, final) else moved)[original] = final
     return fixes, moved
 

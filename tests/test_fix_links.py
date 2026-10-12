@@ -95,6 +95,22 @@ class ApplyFixesSafetyTest(unittest.TestCase):
                 os.chdir(cwd)
             self.assertIn("http://old.example/a", (root / "lychee" / "unfixed-links.md").read_text(encoding="utf-8"))
 
+    def test_a_url_after_a_comma_inside_a_query_is_left_alone(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            proxied = "https://proxy.example/?urls=http://other.example/,http://old.example/a"
+            (root / "README.md").write_text(f"* [A](http://old.example/a)\n* <{proxied}>\n", encoding="utf-8")
+            apply_fixes({"http://old.example/a": "https://new.example/a"}, root)
+            self.assertEqual((root / "README.md").read_text(encoding="utf-8"),
+                             f"* [A](https://new.example/a)\n* <{proxied}>\n")
+
+    def test_fixed_in_one_file_still_reported_in_another(self):
+        from awesome_list_infra.fix_links import get_unfixable
+        report = {"error_map": {"./README.md": [{"url": "http://old.example/a", "status": {"text": "404"}}],
+                                ".github/notes.md": [{"url": "http://old.example/a", "status": {"text": "404"}}]}}
+        unfixable = get_unfixable(report, {("README.md", "http://old.example/a")})
+        self.assertEqual(list(unfixable), [".github/notes.md"])
+
     def test_config_file_is_fixed(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

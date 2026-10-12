@@ -39,12 +39,25 @@ def get_wayback_fixes(report: dict) -> dict[str, str]:
     return fixes
 
 
-def get_unfixable(report: dict, fixed_urls: set[str]) -> dict[str, list[dict]]:
+def source_path(source: str) -> str:
+    """A lychee input source as a path relative to the checkout, like apply_fixes reports."""
+    path = Path(source)
+    if path.is_absolute():
+        try:
+            path = path.relative_to(Path.cwd())
+        except ValueError:
+            pass
+    return path.as_posix()
+
+
+def get_unfixable(report: dict, fixed: set[tuple[str, str]]) -> dict[str, list[dict]]:
+    """Broken links per source, except those replaced in that same file: the same dead URL can
+    also sit in a file the fixes don't touch."""
     unfixable: dict[str, list[dict]] = {}
     for source, entries in report.get("error_map", {}).items():
         for entry in entries:
             url = entry["url"]
-            if url not in fixed_urls:
+            if (source_path(source), url) not in fixed:
                 unfixable.setdefault(source, []).append(
                     {
                         "url": url,
@@ -62,7 +75,7 @@ def get_unfixable(report: dict, fixed_urls: set[str]) -> dict[str, list[dict]]:
 URL_CONTINUES = r"(?![A-Za-z0-9_\-~%!$&*+;=:@/?#(]|[.,](?=[^\s\]}]))"
 # Nor does a match start inside another URL, e.g. https://web.archive.org/web/2020/https://old.example.
 # A Markdown reference definition ("[ref]:url") is the one place a URL may follow a colon.
-URL_STARTS = r"(?:(?<=\]:)|(?<![A-Za-z0-9_\-~%!$&*+;=:@/?#.]))"
+URL_STARTS = r"(?:(?<=\]:)|(?<![A-Za-z0-9_\-~%!$&*+;=:@/?#.,]))"
 
 
 def build_replacement_pattern(fixes: dict[str, str]) -> re.Pattern[str]:
@@ -336,8 +349,8 @@ def main() -> None:
         all_fixes.pop(url)
     changes = apply_fixes(all_fixes, root) if all_fixes else {}
     applied = {old: new for fixes in changes.values() for old, new in fixes}
-    # Only links actually replaced count as fixed: one whose fix matched nowhere is reported too.
-    unfixable = get_unfixable(report, set(applied))
+    # Only links actually replaced, in the file reporting them, count as fixed.
+    unfixable = get_unfixable(report, {(path, old) for path, fixes in changes.items() for old, _ in fixes})
 
     if not changes:
         print("No auto-fixable links found.")

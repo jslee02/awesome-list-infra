@@ -96,8 +96,9 @@ jobs:
           fail: false
           output: lychee/results.json
 
+      # Even when every link works: a redirect to a parked domain or a 404 page counts as working,
+      # and redirects can still be fixed.
       - name: Checkout shared infra
-        if: steps.lychee.outputs.exit_code != 0
         uses: actions/checkout@v6
         with:
           repository: jslee02/awesome-list-infra
@@ -105,7 +106,6 @@ jobs:
           path: .awesome-list-infra
 
       - name: Fix broken links
-        if: steps.lychee.outputs.exit_code != 0
         id: fix
         shell: bash
         run: |

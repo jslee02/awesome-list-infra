@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from awesome_list_infra.fix_links import apply_fixes, reverted_fixes
+from awesome_list_infra.fix_links import apply_fixes, generate_unfixable_report, get_redirect_fixes, reverted_fixes
 
 
 class ApplyFixesTest(unittest.TestCase):
@@ -220,6 +220,43 @@ class RegenerationTest(unittest.TestCase):
             (root / "README.md").write_text("[CC0](http://old.example/cc0) [A](https://new.example/a)\n", encoding="utf-8")
             applied = {"http://old.example/cc0": "https://new.example/cc0", "http://old.example/a": "https://new.example/a"}
             self.assertEqual(reverted_fixes(applied, root), ["http://old.example/cc0"])
+
+
+
+class RedirectFixesTest(unittest.TestCase):
+    def test_only_respellings_and_repository_renames_are_followed(self):
+        # From a real lychee report (2026-10-12), in its current JSON shape.
+        moves = {
+            "http://wiki.ros.org/urdf": "https://wiki.ros.org/urdf",
+            "http://www.resibots.eu/limbo/": "http://resibots.eu/limbo/",
+            "https://isaac-sim.github.io/IsaacLab": "https://isaac-sim.github.io/IsaacLab/",
+            "https://github.com/haosulab/ManiSkill": "https://github.com/mani-skill/ManiSkill",
+            # Moved elsewhere: left for a person.
+            "https://github.com/o/r/issues/new?template=x.yml": "https://github.com/login?return_to=x",
+            "https://github.com/ros2/ros2/wiki": "https://github.com/ros2/ros2",
+            "https://www.artiminds.com/": "https://tpglobalfx.com/",
+            "http://www.cimne.com/kratos/": "https://cimne.com/wp-content/uploads/2026/03/kratos.png",
+            "http://www.sim.informatik.tu-darmstadt.de/res/sw/mbslib": "https://www.sim.informatik.tu-darmstadt.deres/sw/mbslib",
+            "https://klampt.org/": "http://klampt.org/",
+            "https://example.org/list": "https://github.com/sindresorhus/awesome-nodejs",
+            "https://parked.example/": "https://github.com/sindresorhus/awesome",  # not the awesome badge
+            "https://github.com/b/tool": "https://github.com/login-bot/tool/wiki",
+        }
+        report = {"redirect_map": {"README.md": [
+            {"origin": old, "redirects": [{"url": new, "code": 301}]} for old, new in moves.items()]
+            + [{"origin": "https://awesome.re", "redirects": [{"url": "https://github.com/sindresorhus/awesome", "code": 302}]},
+               {"origin": "http://creativecommons.org/publicdomain/zero/1.0/",
+                "redirects": [{"url": "https://creativecommons.org/publicdomain/zero/1.0/", "code": 302}]}]}}
+        fixes, moved = get_redirect_fixes(report)
+        self.assertEqual(fixes, dict(list(moves.items())[:4]))
+        # Left for a person, except GitHub's sign-in wall.
+        self.assertEqual(moved, dict(list(moves.items())[5:]))
+        self.assertIn("- [ ] https://www.artiminds.com/ -> https://tpglobalfx.com/", generate_unfixable_report({}, moved))
+
+    def test_older_report_shape(self):
+        report = {"redirect_map": {"README.md": [{"url": "http://a.example/x", "status": {
+            "redirects": {"redirects": [{"url": "https://www.a.example/x/", "code": 301}]}}}]}}
+        self.assertEqual(get_redirect_fixes(report), ({"http://a.example/x": "https://www.a.example/x/"}, {}))
 
 
 if __name__ == "__main__":

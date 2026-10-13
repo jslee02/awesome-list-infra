@@ -79,10 +79,13 @@ jobs:
       CREATE_PR_TOKEN: ${{ secrets.CREATE_PR_TOKEN }}  # optional; lets link-fix PRs run CI
 ```
 
-Pull requests fail only on definitive broken links. Scheduled runs try to
-replace redirects and dead links with suggested or archived URLs, then open a
-maintenance PR for review. Links they can't fix are listed in one open
-"Link Checker" issue, which later runs update instead of opening another.
+Pull requests fail only on definitive broken links. Scheduled runs replace
+dead links with archived URLs, and redirects that only respell a link (`https`,
+`www.`, a trailing slash) or follow a renamed GitHub repository, then open a
+maintenance PR for review. Links they can't fix, and redirects that lead
+elsewhere (a moved page, or a parked or hijacked domain, which still counts as
+working), are listed in one open "Link Checker" issue, which later runs update
+instead of opening another.
 
 ### Protect README
 

@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 
@@ -15,17 +16,52 @@ def load_report(path: str) -> dict:
         return json.load(f)
 
 
-def get_redirect_fixes(report: dict) -> dict[str, str]:
+def same_place(old: str, new: str) -> bool:
+    """Whether a redirect only respells a URL (https, www., a trailing slash) or follows a renamed
+    GitHub repository. Other moves are left to a person: an expired domain can redirect to an
+    unrelated site, a page to its site's home or an image, a login wall to the sign-in page."""
+    a, b = urllib.parse.urlsplit(old), urllib.parse.urlsplit(new)
+    if b.scheme not in (a.scheme, "https"):
+        return False
+
+    def spot(p: urllib.parse.SplitResult, path: str) -> tuple:
+        return (p.hostname or "").removeprefix("www."), p.port, path.rstrip("/"), p.query, p.fragment
+
+    if spot(a, a.path) == spot(b, b.path):
+        return True
+    old_path, new_path = a.path.split("/"), b.path.split("/")  # ["", owner, repo, rest...]
+    return (spot(a, "") == spot(b, "") == ("github.com", None, "", a.query, a.fragment)
+            and len(old_path) > 2 and len(new_path) > 2 and all(new_path[1:3])
+            and old_path[3:] == new_path[3:])
+
+
+# Redirects that need no one: GitHub sends anonymous visitors of an issue form to sign in, the
+# awesome badge's link goes on to the awesome list itself, and the shared README generator links
+# CC0 over http (a fix would only drift from it in lists that don't regenerate after fixing).
+EXPECTED_REDIRECTS = [
+    (re.compile(r"https://github\.com/[^/]+/[^/]+/issues/new\b"), re.compile(r"https://github\.com/login\?")),
+    (re.compile(r"https?://awesome\.re/?$"), re.compile(r"https://github\.com/sindresorhus/awesome/?$")),
+    (re.compile(r"http://creativecommons\.org/publicdomain/zero/1\.0/$"),
+     re.compile(r"https://creativecommons\.org/publicdomain/zero/1\.0/$")),
+]
+
+
+def get_redirect_fixes(report: dict) -> tuple[dict[str, str], dict[str, str]]:
+    """Redirects to apply (`same_place`), and the other moves for a person to check, as old -> new.
+    The checker counts a redirect to a parked domain or a 404 page as working, so it's listed."""
     fixes: dict[str, str] = {}
+    moved: dict[str, str] = {}
     for _source, entries in report.get("redirect_map", {}).items():
         for entry in entries:
-            original = entry["url"]
-            chain = entry.get("status", {}).get("redirects", {}).get("redirects", [])
-            if chain:
-                final = chain[-1]["url"]
-                if final != original:
-                    fixes[original] = final
-    return fixes
+            # lychee's current JSON: {"origin", "redirects": [hops]}; older: {"url", "status": {"redirects": {...}}}
+            original = entry.get("origin") or entry.get("url", "")
+            chain = entry.get("redirects")
+            if not isinstance(chain, list):
+                chain = entry.get("status", {}).get("redirects", {}).get("redirects", [])
+            final = chain[-1]["url"] if chain else original
+            if final != original and not any(a.match(original) and b.match(final) for a, b in EXPECTED_REDIRECTS):
+                (fixes if same_place(original, final) else moved)[original] = final
+    return fixes, moved
 
 
 def get_wayback_fixes(report: dict) -> dict[str, str]:
@@ -266,7 +302,7 @@ def generate_pr_summary(
     return "\n".join(lines)
 
 
-def generate_unfixable_report(unfixable: dict[str, list[dict]]) -> str:
+def generate_unfixable_report(unfixable: dict[str, list[dict]], moved: dict[str, str]) -> str:
     lines: list[str] = [
         "## Broken Links Requiring Manual Fix\n",
         "The following links could not be automatically fixed "
@@ -277,6 +313,14 @@ def generate_unfixable_report(unfixable: dict[str, list[dict]]) -> str:
         for entry in entries:
             lines.append(f"- [ ] {entry['url']} -- {entry['status']}")
         lines.append("")
+    if moved:
+        lines += [
+            "### Redirected elsewhere\n",
+            "These links lead to another page. Update each one if its page moved, or remove it if the "
+            "site is gone or now hosts something else.\n",
+            *(f"- [ ] {old} -> {new}" for old, new in sorted(moved.items())),
+            "",
+        ]
 
     return "\n".join(lines)
 
@@ -307,7 +351,8 @@ def verify_after_regeneration(applied_path: Path, root: Path, out_dir: Path) -> 
         report = out_dir / "unfixed-links.md"
         lines = [
             "### Restored by the README generator\n",
-            "These links come from the generator itself, so fix them there:\n",
+            "The generator writes these links itself or builds them from a data field (such as a `github` "
+            "slug), so fix them there:\n",
             *(f"- [ ] {old} -> {applied[old]}" for old in reverted),
             "",
         ]
@@ -335,7 +380,7 @@ def main() -> None:
     out_dir = Path("lychee")
     out_dir.mkdir(exist_ok=True)
 
-    redirect_fixes = get_redirect_fixes(report)
+    redirect_fixes, moved = get_redirect_fixes(report)
     wayback_fixes = get_wayback_fixes(report)
 
     all_fixes: dict[str, str] = {}
@@ -351,18 +396,13 @@ def main() -> None:
     applied = {old: new for fixes in changes.values() for old, new in fixes}
     # Only links actually replaced, in the file reporting them, count as fixed.
     unfixable = get_unfixable(report, {(path, old) for path, fixes in changes.items() for old, _ in fixes})
+    if unfixable or moved:
+        (out_dir / "unfixed-links.md").write_text(generate_unfixable_report(unfixable, moved), encoding="utf-8")
+    set_output("has_unfixable", "true" if unfixable or moved else "false")
 
     if not changes:
         print("No auto-fixable links found.")
         set_output("fixes_applied", "false")
-        if unfixable:
-            (out_dir / "unfixed-links.md").write_text(
-                generate_unfixable_report(unfixable),
-                encoding="utf-8",
-            )
-            set_output("has_unfixable", "true")
-        else:
-            set_output("has_unfixable", "false")
         return
 
     (out_dir / "applied-fixes.json").write_text(json.dumps(applied, indent=2), encoding="utf-8")
@@ -375,14 +415,7 @@ def main() -> None:
         generate_pr_summary(redirect_fixes, wayback_fixes, changes, unfixable),
         encoding="utf-8",
     )
-    if unfixable:
-        (out_dir / "unfixed-links.md").write_text(
-            generate_unfixable_report(unfixable),
-            encoding="utf-8",
-        )
-
-    set_output("fixes_applied", "true" if changes else "false")
-    set_output("has_unfixable", "true" if unfixable else "false")
+    set_output("fixes_applied", "true")
 
 
 if __name__ == "__main__":

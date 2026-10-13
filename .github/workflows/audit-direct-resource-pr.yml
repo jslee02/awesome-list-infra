@@ -27,6 +27,7 @@ jobs:
     if: |
       github.event.pull_request &&
       !github.event.pull_request.draft &&
+      !contains(github.event.pull_request.labels.*.name, 'maintainer-pick') &&
       (!inputs.skip-bots || github.event.pull_request.user.type != 'Bot') &&
       !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest

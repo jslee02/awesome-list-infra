@@ -2,6 +2,8 @@
 
 import json
 import unittest
+
+import yaml
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -654,7 +656,7 @@ class Round12Test(unittest.TestCase):
 
     def test_repo_ids(self):
         from unittest import mock
-        found = {"data": {"r0": {"databaseId": 5}, "r1": None}, "errors": [{"type": "NOT_FOUND", "path": ["r1"]}]}
+        found = {"data": {"r0": {"databaseId": 5, "nameWithOwner": "a/b"}, "r1": None}, "errors": [{"type": "NOT_FOUND", "path": ["r1"]}]}
         with mock.patch.object(triage, "api", return_value=found) as api:
             self.assertEqual(triage.repo_ids(["a/b", "c/d", "a/b"]), {"a/b": 5, "c/d": None})
             self.assertEqual(api.call_args[0][2]["variables"], {"o0": "a", "n0": "b", "o1": "c", "n1": "d"})
@@ -785,6 +787,266 @@ class Round12Test(unittest.TestCase):
     def test_closed_pr_from_a_deleted_fork(self):
         pr = {"merged": False, "number": 200, "head": {"ref": "add-entry/issue-160", "repo": None}}
         self.assertEqual(triage.dispatch_for_closed_pr(pr), "PR: nothing to do")
+
+
+class AddEntryTest(unittest.TestCase):
+    def added(self, existing: list[str]) -> list[str]:
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as data:
+            (Path(data) / "control.yaml").write_text(yaml.dump([{"name": n} for n in existing]), encoding="utf-8")
+            with mock.patch.object(triage, "DATA", Path(data)), mock.patch.object(triage.subprocess, "run"):
+                triage.add_entry({"name": "Mid"}, "control")
+            return [e["name"] for e in yaml.safe_load((Path(data) / "control.yaml").read_text(encoding="utf-8"))]
+
+    def test_alphabetical_file_stays_alphabetical(self):
+        self.assertEqual(self.added(["Alpha", "Zeta"]), ["Alpha", "Mid", "Zeta"])
+
+    def test_curated_order_is_kept(self):
+        self.assertEqual(self.added(["Survey", "Alpha"]), ["Survey", "Alpha", "Mid"])
+
+
+class CitationNameTest(unittest.TestCase):
+    def test_a_citation_name_is_kept_whole(self):
+        citation = ("A Ray Intersection Algorithm for Fast Growth Distance Computation Between Convex Sets "
+                    "(2026), A. Thirugnanam and K. Sreenath")
+        body = NEW_FORM.format(box="X").replace("FusionCore", citation)
+        self.assertEqual(triage.parse_issue("[Suggestion] x", body, TODAY).name, citation)
+
+
+class ManualReviewTest(unittest.TestCase):
+    """A list's non-software categories (papers, books) are reviewed by hand, even with code on GitHub."""
+
+    def setUp(self):
+        triage.load_categories([("slam", "SLAM & State Estimation", ""), ("papers", "Papers", "")], ["papers"])
+        triage.REPO_NAMES.clear()  # names looked up in this "run" only
+
+    def tearDown(self):
+        triage.load_categories([("kinematics-dynamics", "Kinematics & Dynamics", ""), ("simulators", "Simulators", ""),
+                                ("control", "Control", ""), ("slam", "SLAM & State Estimation", ""),
+                                ("other-awesome-lists", "Other Awesome Lists", "")])
+
+    def paper(self, evidence: str = "") -> triage.Suggestion:
+        body = NEW_FORM.format(box="X").replace("SLAM & State Estimation", "Papers")
+        s = triage.parse_issue("[Suggestion] x", body, TODAY)
+        s.evidence = evidence
+        return s
+
+    def test_a_paper_with_code_skips_the_repository_gates(self):
+        little_used_code = repo(stars=3, outside=0, id=7)
+        d = triage.decide(self.paper(), little_used_code, ctx())
+        self.assertEqual((d.state, d.close), ("question", False))  # asks for evidence instead of closing
+        self.assertIn("**Papers** by hand", d.message)
+        d = triage.decide(self.paper("Cited 300 times"), little_used_code, ctx())
+        self.assertEqual((d.state, d.target), ("needs-review", None))
+        d = triage.decide(self.paper(), little_used_code, ctx(pick=True))
+        self.assertEqual(d.target, ("papers", None))
+
+    def test_a_paper_is_identified_by_its_own_links_not_its_code(self):
+        paper = self.paper("Cited")  # its URL is https://github.com/manankharwar/fusioncore, a GitHub URL
+        paper.url = "https://arxiv.org/abs/1"
+        listed_paper = {triage.url_key("https://arxiv.org/abs/1"): "Paper (Papers)"}
+        d = triage.decide(paper, repo(id=7), ctx(listed=listed_paper))
+        self.assertEqual((d.close, d.labels), (True, {"duplicate"}))  # the same paper
+        code_listed_as_a_library = {"id:7": "Library (SLAM & State Estimation)"}
+        self.assertEqual(triage.decide(paper, repo(id=7), ctx(listed=code_listed_as_a_library)).state, "needs-review")
+        other = {**vars(paper)}
+        other["url"] = "https://arxiv.org/abs/2"  # another paper with the same code
+        self.assertNotEqual(triage.suggestion_keys(paper, 7), triage.suggestion_keys(triage.Suggestion(**other), 7))
+
+    def test_identity_prefers_the_papers_own_page(self):
+        gitlab = {"gitlab": "group/shared-code"}
+        a = {"name": "A", "url": "https://arxiv.org/abs/1", **gitlab}
+        b = {"name": "B", "url": "https://arxiv.org/abs/2", **gitlab}
+        self.assertNotEqual(triage.resource_keys(a), triage.resource_keys(b))  # shared code isn't the paper
+        self.assertEqual(triage.resource_keys({"name": "C", "github": "o/r", "_meta": {"id": 7}}),
+                         {"id:7", triage.url_key("https://github.com/o/r")})  # the slug matches ID-less entries
+
+    def test_github_pages_deeper_than_the_repository_are_kept(self):
+        paper = self.paper()
+        paper.url = "https://github.com/manankharwar/fusioncore/blob/main/paper.pdf"
+        entry, _ = triage.build_entry(paper, repo(full_name="manankharwar/fusioncore", id=7), None, manual=True)
+        self.assertEqual(entry["url"], "https://github.com/manankharwar/fusioncore/blob/main/paper.pdf")
+        paper.url = "https://github.com/manankharwar/fusioncore"  # the repository itself
+        entry, _ = triage.build_entry(paper, repo(full_name="manankharwar/fusioncore", id=7), None, manual=True)
+        self.assertNotIn("url", entry)
+
+    def test_pending_keys_match_the_entry_built_for_the_pr(self):
+        paper = self.paper()
+        paper.url = ""  # no page of its own: the repository's homepage isn't taken
+        r = repo(full_name="manankharwar/fusioncore", id=7, homepage="https://fusion.example")
+        entry, _ = triage.build_entry(paper, r, None, manual=True)
+        self.assertNotIn("url", entry)
+        self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(entry))  # {"id:7"}, rename-proof
+
+    def test_a_paper_without_github_is_still_its_own_page(self):
+        paper = self.paper("Cited")
+        paper.repo, paper.url, paper.alt_repo = None, "https://arxiv.org/abs/1", "https://gitlab.com/group/code"
+        code_listed = {triage.url_key("https://gitlab.com/group/code"): "Code (SLAM & State Estimation)"}
+        self.assertEqual(triage.decide(paper, None, ctx(listed=code_listed)).state, "needs-review")
+        self.assertEqual(triage.suggestion_keys(paper, None), {triage.url_key("https://arxiv.org/abs/1")})
+
+    def test_repository_roots_however_spelled(self):
+        for url in ("http://www.github.com/O/R.git", "https://github.com/o/r/", "https://github.com/o/r#readme"):
+            self.assertEqual(triage.github_repo_root(url), "o/r", url)
+        self.assertIsNone(triage.github_repo_root("https://github.com/o/r/blob/main/paper.pdf"))
+        paper = self.paper()
+        paper.repo, paper.url = "old/name", "https://github.com/OLD/name"  # renamed since: still its root
+        entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
+        self.assertNotIn("url", entry)
+
+    def test_pending_keys_ignore_a_mirror_when_github_is_named(self):
+        paper = self.paper()
+        paper.url, paper.alt_repo = "", "https://gitlab.com/mirror/code"
+        r = repo(full_name="manankharwar/fusioncore", id=7)
+        pr_entry, _ = triage.build_entry(paper, r, None, manual=True)
+        self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(pr_entry))
+
+    def test_pending_keys_know_a_renamed_repositorys_current_root(self):
+        paper = self.paper()
+        paper.repo, paper.url = "old/name", "https://github.com/new/name"  # old slug, current root URL
+        triage.REPO_NAMES[7] = "new/name"  # recorded by this run's lookups
+        pr_entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
+        # The PR's marker uses the submitted name as an alias too, as open_pr does.
+        self.assertEqual(triage.suggestion_keys(paper, 7), triage.resource_keys(pr_entry, [paper.repo]))
+
+    def test_an_unusable_page_link_is_asked_for_again(self):
+        paper = self.paper("Cited")
+        paper.url = "https://en.wikipedia.org/wiki/Tool_(robotics)"
+        d = triage.decide(paper, repo(id=7), ctx(pick=True))
+        self.assertEqual((d.state, d.target), ("question", None))
+        self.assertIn("couldn't use the link", d.message)
+        self.assertIn("reply with `URL: `", d.message)  # a bare repository link would read as the repository
+        paper.repo, paper.alt_repo = None, "https://gitlab.com/group/code"  # code elsewhere can't stand in either
+        d = triage.decide(paper, None, ctx(pick=True))
+        self.assertEqual((d.state, d.target), ("question", None))
+
+    def test_github_pages_key_by_repository_id_and_path(self):
+        old = {"name": "P", "url": "https://github.com/Old/Name/blob/main/paper.pdf", "github": "Old/Name", "_meta": {"id": 7}}
+        new = {"name": "P", "url": "https://github.com/new/name/blob/main/paper.pdf", "github": "new/name", "_meta": {"id": 7}}
+        self.assertIn("id:7/blob/main/paper.pdf", triage.resource_keys(old))
+        self.assertTrue(triage.resource_keys(old) & triage.resource_keys(new))  # a rename keeps the identity
+        root_with_anchor = {"name": "P", "url": "https://github.com/o/r#readme", "github": "o/r", "_meta": {"id": 7}}
+        self.assertEqual(triage.resource_keys(root_with_anchor), {"id:7", triage.url_key("https://github.com/o/r")})
+        id_less = {"name": "P", "url": "https://github.com/o/r/blob/main/paper.pdf", "github": "o/r"}
+        self.assertTrue(triage.resource_keys(id_less) & triage.resource_keys({**id_less, "_meta": {"id": 7}}))
+        self.assertTrue(triage.resource_keys({"name": "P", "github": "Owner/Repo"})
+                        & triage.resource_keys({"name": "P", "github": "owner/repo", "_meta": {"id": 7}}))
+
+    def test_a_reply_naming_only_a_repository_keeps_an_unusable_link_visible(self):
+        body = NEW_FORM.format(box="X").replace("SLAM & State Estimation", "Papers").replace(
+            "https://github.com/manankharwar/fusioncore", "https://en.wikipedia.org/wiki/Tool_(robotics)")
+        s = triage.parse_issue("[Suggestion] x", body, TODAY, ["The code is https://github.com/o/fixed"])
+        self.assertEqual(s.url, "https://en.wikipedia.org/wiki/Tool_(robotics)")  # still asked for
+
+    def test_a_paper_never_borrows_its_codes_description(self):
+        paper = self.paper()
+        paper.description = ""
+        entry, flags = triage.build_entry(paper, repo(id=7, about="A library for robots."), None, manual=True)
+        self.assertNotIn("description", entry)
+        self.assertTrue(any("Description" in f for f in flags))
+
+    def test_hand_reviewed_repositories_skip_outside_people(self):
+        from unittest import mock
+        meta = {"id": 7, "full_name": "o/r", "default_branch": "main", "created_at": "2024-01-01T00:00:00Z",
+                "stargazers_count": 1, "archived": False}
+        with mock.patch.object(triage, "api", side_effect=lambda m, path, *a, **k: meta if path.endswith("/repos/o/r") else []), \
+                mock.patch.object(triage, "outside_people") as outside:
+            info = triage.fetch_repo("o/r", outside=False)
+        outside.assert_not_called()
+        self.assertEqual((info.outside, info.outside_complete), (0, True))
+
+    def test_a_nested_page_under_an_old_name_keys_by_id(self):
+        paper = self.paper()
+        paper.repo, paper.url = "old/name", "https://github.com/old/name/blob/main/paper.pdf"
+        entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
+        self.assertEqual(entry["url"], "https://github.com/new/name/blob/main/paper.pdf")  # stored under the current name
+        self.assertIn("id:7/blob/main/paper.pdf", triage.resource_keys(entry))  # no alias needed once listed
+
+    def test_pages_differing_by_anchor_are_different_resources(self):
+        def keys(url, github="o/r"):
+            return triage.resource_keys({"name": "P", "url": url, "github": github, "_meta": {"id": 7}})
+        a, b = keys("https://github.com/o/r/wiki/Papers#paper-a"), keys("https://github.com/o/r/wiki/Papers#paper-b")
+        self.assertFalse(a & b)
+        self.assertIn("id:7/wiki/Papers#paper-a", keys("https://github.com/o/new/wiki/Papers#paper-a", "o/new"))
+        self.assertIn("id:7/blob/main/p.pdf?raw=true", keys("https://github.com/o/r/blob/main/p.pdf?raw=true"))
+
+    def test_an_id_less_page_matches_a_suggestion_under_the_old_name(self):
+        listed = dict.fromkeys(triage.resource_keys(
+            {"name": "P", "url": "https://github.com/old/name/blob/main/p.pdf", "github": "old/name"}), "P (Papers)")
+        paper = self.paper()
+        paper.repo, paper.url = "old/name", "https://github.com/old/name/blob/main/p.pdf"
+        entry, _ = triage.build_entry(paper, repo(full_name="new/name", id=7), None, manual=True)
+        self.assertTrue(triage.resource_keys(entry, [paper.repo]) & listed.keys())
+
+    def test_peers_keep_a_page_their_reply_gives_with_its_repository(self):
+        from unittest import mock
+        author = {"login": "someone"}
+        body = NEW_FORM.format(box="X").replace("SLAM & State Estimation", "Papers").replace(
+            "https://github.com/manankharwar/fusioncore", "_No response_").replace("manankharwar/fusioncore", "_No response_")
+        peer = {"number": 10, "title": "[Suggestion] x", "body": body, "user": author}
+        replies = [{"user": author, "body": "URL: https://github.com/o/r/blob/main/p.pdf"}]
+        with mock.patch.object(triage, "paged", return_value=replies), \
+                mock.patch.object(triage, "repo_ids", side_effect=lambda slugs: {x: 7 for x in slugs}):
+            self.assertIn("id:7/blob/main/p.pdf", triage.peer_keys([peer])[10])
+
+    def test_a_page_in_another_repository_keeps_its_url(self):
+        paper = self.paper()
+        paper.repo, paper.url = "author/code", "https://github.com/author/papers/blob/main/paper.pdf"
+        entry, _ = triage.build_entry(paper, repo(full_name="author/code", id=7), None, manual=True)
+        self.assertEqual(entry["url"], paper.url)
+        paper.repo = "author/old-code"  # renamed code repository: the page is still elsewhere
+        entry, _ = triage.build_entry(paper, repo(full_name="author/code", id=7), None, manual=True)
+        self.assertEqual(entry["url"], paper.url)
+
+    def test_an_id_less_listed_entry_matches_by_slug(self):
+        listed = {}
+        listed |= dict.fromkeys(triage.resource_keys({"name": "P", "github": "o/r"}), "P (Papers)")  # no _meta.id yet
+        paper = self.paper("Cited")
+        paper.repo, paper.url = "o/r", ""
+        d = triage.decide(paper, repo(full_name="o/r", id=7), ctx(listed=listed))
+        self.assertEqual((d.close, d.labels), (True, {"duplicate"}))
+
+    def test_an_old_name_matches_an_id_less_entry(self):
+        listed = dict.fromkeys(triage.resource_keys({"name": "P", "github": "old/name"}), "P (Papers)")
+        keys = triage.resource_keys({"name": "P", "github": "new/name", "_meta": {"id": 7}}, ["old/name"])
+        self.assertTrue(keys & listed.keys())
+
+    def test_an_explicit_url_reply_replaces_an_unusable_link(self):
+        body = NEW_FORM.format(box="X").replace(
+            "https://github.com/manankharwar/fusioncore", "https://en.wikipedia.org/wiki/Tool_(robotics)")
+        s = triage.parse_issue("[Suggestion] x", body, TODAY, ["URL: https://github.com/o/paper"])
+        self.assertEqual(s.url, "https://github.com/o/paper")
+
+    def test_a_root_url_is_identified_like_its_repository(self):
+        root = {"name": "P", "url": "https://github.com/o/r", "github": "o/r", "_meta": {"id": 7}}
+        self.assertEqual(triage.resource_keys(root), triage.resource_keys({"name": "P", "github": "o/r", "_meta": {"id": 7}}))
+
+    def test_peers_read_replies_that_correct_a_papers_link(self):
+        from unittest import mock
+        author = {"login": "someone"}
+        body = NEW_FORM.format(box="X").replace("SLAM & State Estimation", "Papers").replace(
+            "https://github.com/manankharwar/fusioncore", "https://en.wikipedia.org/wiki/Tool_(robotics)")
+        peer = {"number": 10, "title": "[Suggestion] x", "body": body, "user": author}
+        replies = [{"user": author, "body": "URL: https://arxiv.org/abs/9"}]
+        with mock.patch.object(triage, "paged", return_value=replies), \
+                mock.patch.object(triage, "repo_ids", side_effect=lambda slugs: {x: 7 for x in slugs}):
+            self.assertEqual(triage.peer_keys([peer]), {10: {triage.url_key("https://arxiv.org/abs/9")}})
+
+    def test_malformed_reply_links_dont_abort(self):
+        self.assertIsNone(triage.github_repo_root("https://["))
+        self.assertFalse(triage.on_github("https://["))
+        s = triage.parse_issue("[Suggestion] x", "", TODAY, ["See https://[ for details"])
+        self.assertIsInstance(s.url, str)
+
+    def test_a_paper_naming_a_missing_repository_asks_for_it(self):
+        d = triage.decide(self.paper("Cited"), None, ctx())
+        self.assertEqual(d.state, "question")
+        self.assertIn("couldn't find `github.com/", d.message)
+
+    def test_software_still_takes_the_gates(self):
+        s = triage.parse_issue("[Suggestion] x", NEW_FORM.format(box="X"), TODAY)
+        self.assertEqual(triage.decide(s, repo(stars=3, outside=0), ctx()).state, "closed")
 
 
 if __name__ == "__main__":

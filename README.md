@@ -166,14 +166,17 @@ directly.
 ### Triage Suggestions
 
 Applies an acceptance bar to `Suggest a Resource` issues and opens entry PRs.
-Currently used by awesome-robotics-libraries, whose `CONTRIBUTING.md` documents
-the policy: gates on repository age, stars, outside issue/PR authors, recent
+Used by awesome-robotics-libraries, awesome-collision-detection, and
+awesome-entity-component-system, whose `CONTRIBUTING.md` files document the policy: gates on repository age, stars, outside issue/PR authors, recent
 commits, and license; a 1,000-star fast lane; a monitoring pod for near misses;
 one open suggestion per person; human confirmation and affiliation.
 
 The list provides its categories through the `SECTIONS` registry of its README
 generator (`(key, title, ...)` tuples, with `data/<key>.yaml` files), and its own
-generator and validator scripts. Duplicate checks match repositories by GitHub
+generator and validator scripts. A list with non-software categories (papers,
+books, talks) can name their keys in the generator's `MANUAL_REVIEW`; a maintainer
+reviews those suggestions by hand even when they link a GitHub repository.
+Duplicate checks match repositories by GitHub
 ID, so a listed entry's `_meta.id` (recorded by the list's metadata refresh)
 still matches after the repository is renamed or transferred. The caller owns the triggers and a per-issue
 concurrency group, so sweeps (which dispatch one run per issue) never race
@@ -283,10 +286,10 @@ the result, and opens a signed-off maintenance PR only when expected metadata
 or README files changed. By default it stages `README.md` and the `data`
 directory.
 
-PRs opened with the default `GITHUB_TOKEN` trigger no `pull_request` CI at
-all. To have maintenance PRs run CI, add a repository secret named
-`CREATE_PR_TOKEN` containing a fine-grained bot token or GitHub App token with
-`contents: write` and `pull-requests: write`. The workflow falls back to
+CI on PRs opened with the default `GITHUB_TOKEN` may wait for a maintainer to
+approve the run. To skip that, add a repository secret named `CREATE_PR_TOKEN`
+containing a fine-grained bot token or GitHub App token with `contents: write`
+and `pull-requests: write`. The workflow falls back to
 `GITHUB_TOKEN` when that secret is not present. Map only this secret in caller
 workflows so unrelated repository secrets are not exposed to the reusable
 workflow.

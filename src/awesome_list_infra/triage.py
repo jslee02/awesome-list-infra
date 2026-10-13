@@ -81,23 +81,27 @@ LABELS = {
 
 TITLE_TO_KEY: dict[str, str] = {}
 KEY_TO_TITLE: dict[str, str] = {}
+MANUAL_REVIEW: set[str] = set()  # category keys a maintainer reviews by hand (papers, books, talks)
 
 
-def load_categories(sections) -> None:
-    """Use the list's categories: (key, title, ...) tuples, as in its README generator."""
+def load_categories(sections, manual_review=()) -> None:
+    """Use the list's categories: (key, title, ...) tuples, as in its README generator, and the
+    keys of those (non-software) a maintainer reviews by hand even with a GitHub repository."""
     TITLE_TO_KEY.clear()
     KEY_TO_TITLE.clear()
+    MANUAL_REVIEW.clear()
     for key, title, *_ in sections:
         TITLE_TO_KEY[title.lower()] = key
         KEY_TO_TITLE[key] = title
+    MANUAL_REVIEW.update(manual_review)
 
 
 def generator_sections(path: Path):
-    """The SECTIONS registry of the list's README generator."""
+    """The SECTIONS registry of the list's README generator and its optional MANUAL_REVIEW keys."""
     spec = importlib.util.spec_from_file_location("list_readme_generator", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.SECTIONS
+    return module.SECTIONS, getattr(module, "MANUAL_REVIEW", ())
 # ── Parsing ─────────────────────────────────────────────────────────────────
 
 # The host must be github.com itself, not gist.github.com or notgithub.com.
@@ -225,11 +229,14 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
     replies = list(reversed(list(author_comments)))
     reply_repos: list[str] = []
     reply_url = ""
+    explicit_url = ""
     reply_evidence = ""
     for c in replies:
         c, ev = split_evidence(c)  # evidence links are not the project
         reply_evidence = reply_evidence or ev
         reply_url = reply_url or first_link(c)
+        if not explicit_url and (m := re.search(r"^[\s*-]*\**url\**\s*:\**\s*(\S+)", c, re.I | re.M)):
+            explicit_url = first_link(m[1])  # "URL: ..." replaces the resource's link, whatever it is
         for found in [repo_in_text(c), *map(repo_in_field, c.splitlines())]:
             if found and found not in reply_repos:
                 reply_repos.append(found)
@@ -240,8 +247,9 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
     title_name = re.sub(r"^\s*(\[suggestion\]|(suggest(ion)?|add)\b:?)\s*", "", title or "", flags=re.I)
     return Suggestion(
         # Names never need URLs; dropping them keeps URL-form closing references out of commits.
+        # Long enough for a paper or book citation, which some lists use as the name.
         name=clean_text(re.sub(r"\S*://\S*", "", fields.get("resource name") or kv.get("name")
-                               or title_name.split("—")[0]), 60),
+                               or title_name.split("—")[0]), 200),
         repo=(repo_in_field(fields.get("github repository", ""))
               or repo_in_field(kv.get("github", ""))
               or repo_in_text(fields.get("url", "") or kv.get("url", ""))
@@ -249,7 +257,9 @@ def parse_issue(title: str, body: str, created: date, author_comments: list[str]
               or (None if is_form else repo_in_text(without_evidence(body)))
               or next(iter(reply_repos), None)),
         reply_repos=reply_repos,
-        url=body_url if safe_url(body_url) or not reply_url else reply_url,
+        # A reply's link replaces an unusable one, unless it only names a repository.
+        url=(body_url if safe_url(body_url) else explicit_url or (
+            body_url if not reply_url or github_repo_root(reply_url) else reply_url)),
         category=(fields.get("category") or kv.get("category") or "").strip(),
         description=fields.get("description") or kv.get("description") or "",
         alt_repo=fields.get("alternative repository", "").strip(),
@@ -386,9 +396,17 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
             return Decision("question", f"{why}Before I can evaluate this suggestion, please:\n\n"
                             + "\n".join(f"- {a}" for a in asks), {"question"})
     target = category_target(s.category)
-    if s.repo is None:
-        # Judge the links the entry would actually get: unsafe ones are dropped.
-        if same := entry_keys(build_entry(s, None, None)[0]):
+    manual = bool(target and target[0] in MANUAL_REVIEW)
+    if manual and s.url and not safe_url(s.url):
+        # A reply's bare repository link reads as naming the repository, so the reply says "URL:".
+        return Decision("question", "I couldn't use the link given. Please put a plain `https://` URL for the "
+                        "resource itself, without spaces, quotes, or parentheses, in the **URL** field (edit the "
+                        "issue), or reply with `URL: ` followed by it.", {"question"})
+    if s.repo is None or (manual and r):
+        # Judge the links the entry would actually get (unsafe ones are dropped), including the
+        # repository of a paper or book that has one.
+        if same := (resource_keys(build_entry(s, r, None, manual=True)[0], [s.repo] if s.repo else []) if manual
+                    else entry_keys(build_entry(s, None, None)[0])):
             if listed := next((ctx.listed[k] for k in same if k in ctx.listed), None):
                 return already_listed(listed)
             if ctx.pending:
@@ -402,13 +420,13 @@ def decide(s: Suggestion, r: RepoInfo | None, ctx: Context) -> Decision:
                                     {"needs-review"})
                 return Decision("needs-review", "Maintainer pick: opening a PR for review.", {"needs-review"},
                                 target=target)
-            if not s.evidence and not ctx.pick:
-                return Decision("question", "This resource is not on GitHub, so a maintainer reviews it by hand, "
-                                "looking for wide use in robotics. Please add **Evidence of use** (edit the issue), "
-                                "or reply starting with `Evidence:`, for example independent users or customers, "
-                                "citations, or third-party tutorials.", {"question"})
-            return Decision("needs-review", "This resource is not on GitHub, so a maintainer will review it by hand.",
-                            {"needs-review"})
+            how = ("This resource is not on GitHub, so a maintainer reviews it by hand" if s.repo is None
+                   else f"A maintainer reviews suggestions in **{KEY_TO_TITLE[target[0]]}** by hand")
+            if not s.evidence:
+                return Decision("question", f"{how}, looking for wide use. Please add **Evidence of use** (edit the "
+                                "issue), or reply starting with `Evidence:`, for example independent users or "
+                                "customers, citations, or third-party tutorials.", {"question"})
+            return Decision("needs-review", f"{how}.", {"needs-review"})
         if s.alt_repo or s.url:
             return Decision("question", "I couldn't use the link given. Please put a plain `https://` URL, without "
                             "spaces, quotes, or parentheses, in the **URL** or **Alternative Repository** field "
@@ -490,27 +508,71 @@ def pick_description(submitted: str, about: str) -> tuple[str, bool]:
     return (s + ".", True) if s else ("", True)
 
 
+def split_url(url: str) -> urllib.parse.SplitResult | None:
+    """The URL's parts, or None for one too malformed to parse (e.g. "https://[")."""
+    try:
+        return urllib.parse.urlsplit(url or "")
+    except ValueError:
+        return None
+
+
+def github_repo_of(url: str) -> str | None:
+    """"owner/repo", lowercased, of any URL into a GitHub repository (its root or deeper); else None."""
+    if not (parts := split_url(url)):
+        return None
+    path = parts.path.strip("/").lower().split("/")
+    if (parts.hostname or "").removeprefix("www.") == "github.com" and len(path) >= 2 and all(path[:2]):
+        return f"{path[0]}/{path[1].removesuffix('.git')}"
+    return None
+
+
+def github_repo_root(url: str) -> str | None:
+    """"owner/repo", lowercased, if the URL is a GitHub repository's root however spelled (scheme,
+    www., trailing slash, .git, query, fragment); None for any other URL, a deeper page included."""
+    if not (parts := split_url(url)):
+        return None
+    path = parts.path.strip("/").removesuffix(".git").lower().split("/")
+    if (parts.hostname or "").removeprefix("www.") == "github.com" and len(path) == 2 and all(path):
+        return "/".join(path)
+    return None
+
+
 def on_github(url: str) -> bool:
-    return (urllib.parse.urlsplit(url).hostname or "") in ("github.com", "www.github.com")
+    return ((parts := split_url(url)) is not None and (parts.hostname or "") in ("github.com", "www.github.com"))
 
 
 def squash(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None) -> tuple[dict, list[str]]:
+def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None,
+                manual: bool = False) -> tuple[dict, list[str]]:
+    """The entry for a suggestion. For a resource reviewed by hand (`manual`, a paper or book), the
+    URL is only the one given, which may be a GitHub page deeper than the repository (a PDF, a wiki);
+    software also takes the repository's homepage, and never a GitHub URL, as the repository is the
+    `github` field. The manual entry depends on the suggestion alone, so it's the same wherever built."""
     flags = []
     entry: dict = {"name": s.name or (r.full_name.split("/")[1] if r else "")}
     repo_name = r.full_name.split("/")[1] if r else ""
-    if r and squash(repo_name) not in squash(entry["name"]) and squash(entry["name"]) not in squash(repo_name):
+    if r and not manual and squash(repo_name) not in squash(entry["name"]) \
+            and squash(entry["name"]) not in squash(repo_name):
         flags.append(f"Name `{entry['name']}` differs from the repository name `{repo_name}`; check spelling.")
-    # The website: the repository itself is the `github` field.
-    candidates = map(safe_url, (s.url, r.homepage) if r else (s.url,))
-    if url := next((u for u in candidates if u and not (r and on_github(u))), ""):
+    if manual:  # the named repository's root, under any name it has had, is the github field
+        same_repo = {name.lower() for name in (r.full_name if r else None, s.repo) if name}
+        candidates = [u for u in [safe_url(s.url)] if u and github_repo_root(u) not in same_repo]
+    else:
+        candidates = [u for u in map(safe_url, (s.url, r.homepage) if r else (s.url,)) if u and not (r and on_github(u))]
+    if url := next(iter(candidates), ""):
+        old = github_repo_of(url)
+        if manual and r and old in same_repo - {r.full_name.lower()}:
+            # A page under the repository's submitted old name is stored under its current one, so
+            # the listed entry keeps a rename-proof key without the alias; other repositories' pages stay.
+            parts = urllib.parse.urlsplit(url)
+            url = urllib.parse.urlunsplit(parts._replace(path="/" + r.full_name + parts.path[len(old) + 1:]))
         entry["url"] = url
     if r:
         entry["github"] = r.full_name
-    elif alt := safe_url(s.alt_repo):
+    elif not (manual and s.repo) and (alt := safe_url(s.alt_repo)):
         host = re.match(r"https?://(gitlab\.com|bitbucket\.org)/([^?#]+?)/?(?:[?#]|$)", alt)
         if host:
             path = host[2].removesuffix(".git")
@@ -519,7 +581,7 @@ def build_entry(s: Suggestion, r: RepoInfo | None, subsection: str | None) -> tu
             entry["gitlab" if host[1] == "gitlab.com" else "bitbucket"] = path
         else:
             entry["code_url"] = alt
-    description, trimmed = pick_description(s.description, r.about if r else "")
+    description, trimmed = pick_description(s.description, r.about if r and not manual else "")
     if trimmed:
         flags.append("Description was trimmed or is missing; polish it to one sentence of 100 characters or fewer.")
     if description:
@@ -559,13 +621,46 @@ def url_key(url: str) -> str:
     return f"url:{p.netloc.lower().removeprefix('www.').removesuffix(default_port)}{rest}"
 
 
+def resource_keys(e: dict, aliases=()) -> set[str]:
+    """How a resource reviewed by hand (a paper, a book) is identified: by its own URL; without one,
+    by its code links elsewhere; without those, by its GitHub repository (its ID when known, which
+    survives renames). Code isn't the resource while it has a page of its own: two papers can share
+    a repository, and a paper's code may also be listed as a library."""
+    if e.get("url"):
+        repo, repo_id = github_repo_of(e["url"]), (e.get("_meta") or {}).get("id")
+        names = {name.lower() for name in (e.get("github") or "", *aliases) if name}
+        if repo and repo in names:
+            parts = urllib.parse.urlsplit(e["url"])
+            below = "/".join(parts.path.strip("/").split("/")[2:])
+            if below:  # a page inside the repository: the same page under each of its names, and under
+                # its ID (when known), which survives renames
+                below += (f"?{parts.query}" if parts.query else "") + (f"#{parts.fragment}" if parts.fragment else "")
+                keys = {url_key(e["url"])} | {url_key(f"https://github.com/{name}/{below}") for name in names}
+                return keys | ({f"id:{repo_id}/{below}"} if repo_id else set())
+            # The repository's root (with any query or fragment): identified like a resource with no
+            # page of its own.
+        else:
+            return {url_key(e["url"])}
+    code = [e.get("code_url"), e.get("gitlab") and f"https://gitlab.com/{e['gitlab']}",
+            e.get("bitbucket") and f"https://bitbucket.org/{e['bitbucket']}"]
+    if keys := {url_key(u) for u in code if u}:
+        return keys
+    # The ID survives renames; the slug matches entries recorded before they had an ID.
+    keys = {f"id:{repo_id}"} if (repo_id := (e.get("_meta") or {}).get("id")) else set()
+    return keys | {url_key(f"https://github.com/{name.lower()}") for name in (e.get("github"), *aliases) if name}
+
+
+def keys_for(e: dict, category: str, aliases=()) -> set[str]:
+    return resource_keys(e, aliases) if category in MANUAL_REVIEW else entry_keys(e)
+
+
 def listed_repos() -> dict[str, str]:
-    """"Name (Category)" of listed entries, by each of their `entry_keys`."""
+    """"Name (Category)" of listed entries, by each of their keys (`keys_for` their category)."""
     listed = {}
     for key, title in KEY_TO_TITLE.items():
         path = DATA / f"{key}.yaml"
         for e in (yaml.safe_load(path.read_text(encoding="utf-8")) or []) if path.exists() else []:
-            listed |= dict.fromkeys(entry_keys(e), f"{e['name']} ({title})")
+            listed |= dict.fromkeys(keys_for(e, key), f"{e['name']} ({title})")
     return listed
 
 
@@ -578,7 +673,10 @@ def listed_as(listed: dict[str, str], r: RepoInfo, *slugs: str) -> str | None:
 def add_entry(entry: dict, key: str) -> None:
     path = DATA / f"{key}.yaml"
     entries = (yaml.safe_load(path.read_text(encoding="utf-8")) or []) if path.exists() else []
-    entries = sorted(entries + [entry], key=lambda e: e["name"].lower())
+    names = [e["name"].lower() for e in entries]
+    # An alphabetical file stays alphabetical; a curated order (papers, talks) is kept, the new
+    # entry going last for a maintainer to place in review.
+    entries = sorted(entries + [entry], key=lambda e: e["name"].lower()) if names == sorted(names) else entries + [entry]
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(entries, f, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120)
     subprocess.run([sys.executable, str(ROOT / GENERATOR)], cwd=ROOT, check=True, capture_output=True)
@@ -599,7 +697,7 @@ def api(method: str, path: str, body: dict | None = None, token: str | None = No
         headers={
             "Authorization": f"Bearer {token or os.environ['GITHUB_TOKEN']}",
             "Accept": "application/vnd.github+json",
-            "User-Agent": "awesome-robotics-libraries-triage",
+            "User-Agent": "awesome-list-triage",
         },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -653,6 +751,9 @@ def outside_people(owner: str, name: str) -> tuple[int, bool]:
     return len(people), False
 
 
+REPO_NAMES: dict[int, str] = {}  # repository ID -> its current owner/repo, as looked up in this run
+
+
 def repo_ids(slugs) -> dict[str, int | None]:
     """GitHub IDs of owner/repo slugs, or None for repositories that don't exist. Like the REST
     API, GraphQL follows renames and transfers; one request covers up to 100 slugs."""
@@ -660,21 +761,42 @@ def repo_ids(slugs) -> dict[str, int | None]:
     for start in range(0, len(slugs), 100):
         chunk = slugs[start:start + 100]
         params = ",".join(f"$o{i}:String!,$n{i}:String!" for i in range(len(chunk)))
-        fields = " ".join(f"r{i}:repository(owner:$o{i},name:$n{i}){{databaseId}}" for i in range(len(chunk)))
+        fields = " ".join(f"r{i}:repository(owner:$o{i},name:$n{i}){{databaseId nameWithOwner}}" for i in range(len(chunk)))
         variables = {f"{k}{i}": part for i, slug in enumerate(chunk) for k, part in zip("on", slug.split("/"))}
         data = api("POST", "/graphql", {"query": f"query({params}){{{fields}}}", "variables": variables})
         if data.get("data") is None or any(e.get("type") != "NOT_FOUND" for e in data.get("errors") or []):
             raise RuntimeError(f"GraphQL repository lookup failed: {data.get('errors')}")  # the next run retries
         ids |= {slug: (data["data"][f"r{i}"] or {}).get("databaseId") for i, slug in enumerate(chunk)}
+        REPO_NAMES.update({found["databaseId"]: found["nameWithOwner"] for found in data["data"].values() if found})
     return ids
 
 
 def suggestion_keys(s: Suggestion, repo_id: int | None) -> set[str]:
     """What a suggestion is about, as `entry_keys`: its repository's ID; for a resource not on
-    GitHub, its source and website; nothing if its repository doesn't exist."""
+    GitHub, its source and website; for a resource reviewed by hand, its own links (`resource_keys`);
+    nothing if its repository doesn't exist."""
+    target = category_target(s.category)
+    if target and target[0] in MANUAL_REVIEW:
+        if s.repo and not repo_id:
+            return set()  # a named repository that doesn't exist: nothing to compare yet
+        entry = build_entry(s, None, None, manual=True)[0]
+        if not repo_id:
+            return resource_keys(entry)
+        name = REPO_NAMES.get(repo_id, s.repo)  # the current name: the PR's entry drops that root URL too
+        if entry.get("url") and github_repo_root(entry["url"]) == name.lower():
+            del entry["url"]
+        return resource_keys({**entry, "github": name, "_meta": {"id": repo_id}}, [s.repo])
     if repo_id:
         return {f"id:{repo_id}"}
     return entry_keys(build_entry(s, None, None)[0]) if s.repo is None else set()
+
+
+def correct_repository(s: Suggestion, reply_repo: str) -> None:
+    """Take the repository an author's reply supplies for a missing one; a URL into the superseded
+    repository goes too, as it isn't the resource's own page."""
+    if s.url and s.repo and github_repo_of(s.url) == s.repo.lower():
+        s.url = ""
+    s.repo = reply_repo
 
 
 def peer_keys(issues: list[dict]) -> dict[int, set[str]]:
@@ -686,22 +808,34 @@ def peer_keys(issues: list[dict]) -> dict[int, set[str]]:
     result = {}
     for i in issues:
         s, repo_id = parsed[i["number"]], ids.get(parsed[i["number"]].repo)
-        if repo_id is None:  # missing or gone in the body
+        target = category_target(s.category)
+        # Replies matter when the body's repository is missing or gone, and always for a resource
+        # reviewed by hand, whose link a reply can correct ("URL: ...").
+        if repo_id is None or (target and target[0] in MANUAL_REVIEW):
             replies = [c["body"] for c in paged(f"/repos/{REPO}/issues/{i['number']}/comments")
                        if c["user"]["login"] == i["user"]["login"]]
             s = parse_issue(i["title"], i.get("body") or "", POLICY_START, replies)
-            repo_id = next(filter(None, repo_ids(s.reply_repos).values()), None)  # newest first
+            if repo_id is None:  # as its own triage does: the repository named (in the body, else the
+                # newest reply); only if it's missing, the newest existing one in the replies replaces it
+                found = repo_ids([slug for slug in (s.repo, *s.reply_repos) if slug])
+                repo_id = found.get(s.repo)
+                if repo_id is None and (reply_repo := next((x for x in s.reply_repos if found.get(x)), None)):
+                    repo_id = found[reply_repo]
+                    correct_repository(s, reply_repo)
         result[i["number"]] = suggestion_keys(s, repo_id)
     return result
 
 
-def fetch_repo(slug: str) -> RepoInfo | None:
+def fetch_repo(slug: str, outside: bool = True) -> RepoInfo | None:
+    """The repository as the gates see it; `outside=False` skips counting outside people, which
+    only the software gates use."""
     try:
         d = api("GET", f"/repos/{slug}")
     except urllib.error.HTTPError as e:
         if e.code in (404, 451):
             return None
         raise
+    REPO_NAMES[d["id"]] = d["full_name"]
     owner, name = d["full_name"].split("/")
     try:
         branch = urllib.parse.quote(d["default_branch"], safe="")
@@ -718,7 +852,7 @@ def fetch_repo(slug: str) -> RepoInfo | None:
         last_commit=min(last, date.today()) if last else None,
         archived=d["archived"],
         license=(d.get("license") or {}).get("spdx_id") if d.get("license") else None,
-        **dict(zip(("outside", "outside_complete"), outside_people(owner, name))),
+        **dict(zip(("outside", "outside_complete"), outside_people(owner, name) if outside else (0, True))),
         about=d.get("description") or "",
         homepage=d.get("homepage") or "",
         language=d.get("language") or "",
@@ -873,12 +1007,14 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
     alone and flagged when the suggestion changed. The branch name comes from the issue number only.
     """
     branch = f"add-entry/issue-{number}"
-    entry, flags = build_entry(s, r, target[1])
+    entry, flags = build_entry(s, r, target[1], manual=target[0] in MANUAL_REVIEW)
     marker = entry_marker({k: v for k, v in entry.items() if k != "_meta"}, target[0])
     regenerate = None
     fresh_main()
     listed = listed_repos()
-    if listed_as(listed, r) if r else entry_keys(entry) & listed.keys():  # another entry PR merged meanwhile
+    aliases = [s.repo] if s.repo else []
+    if keys_for(entry, target[0], aliases) & listed.keys() if target[0] in MANUAL_REVIEW or not r else listed_as(listed, r):
+        # another entry PR merged meanwhile
         return LISTED
     prs = api("GET", f"/repos/{REPO}/pulls?state=all&head={REPO.split('/')[0]}:{branch}")
     if standing_decline(prs, events, pick):  # closed by a maintainer after this run read the PR list
@@ -904,7 +1040,7 @@ def open_pr(number: int, s: Suggestion, r: RepoInfo | None, target: tuple[str, s
         "", decision, "",
         "**Review:** in scope? Right category? Name and description in house style?",
         *([""] + [f"- ⚠️ {f}" for f in flags] if flags else []),
-        "", marker, f"<!-- keys {' '.join(sorted(entry_keys(entry)))} -->", f"Closes #{number}",
+        "", marker, f"<!-- keys {' '.join(sorted(keys_for(entry, target[0], aliases)))} -->", f"Closes #{number}",
     ])
     title = f"content: add {entry['name']}"
     if regenerate:
@@ -1016,10 +1152,11 @@ def triage(number: int, dry_run: bool) -> str:
     active = in_triage(labels, reopened_since_triage(comments, events))
     open_issues = [i for i in paged(f"/repos/{REPO}/issues?state=open") if i["number"] != number and is_suggestion(i)]
     others = blocking_suggestions(number, active, [normalized(i) for i in open_issues if i["user"]["login"] == author])
-    r = fetch_repo(s.repo) if s.repo else None
+    gated = not (target := category_target(s.category)) or target[0] not in MANUAL_REVIEW
+    r = fetch_repo(s.repo, outside=gated) if s.repo else None
     for reply_repo in s.reply_repos if r is None else []:  # the author corrected the repository
-        if r := fetch_repo(reply_repo):
-            s.repo = reply_repo
+        if r := fetch_repo(reply_repo, outside=gated):
+            correct_repository(s, reply_repo)
             break
     # The open suggestion of the same resource first in the queue, so two entry PRs never race
     # to merge; the others close as its duplicates. One batched lookup per run keeps sweeps linear.
@@ -1171,7 +1308,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="print decisions without changing anything")
     args = parser.parse_args()
 
-    load_categories(generator_sections(ROOT / GENERATOR))
+    load_categories(*generator_sections(ROOT / GENERATOR))
     if not args.dry_run and not os.environ.get("GITHUB_ACTIONS"):
         # Opening PRs switches branches in the working tree; run for real only in CI.
         raise SystemExit("Use --dry-run locally; apply changes with the workflow's manual run.")

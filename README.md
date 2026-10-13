@@ -164,7 +164,8 @@ net-new `- name:` entry under `data/` receive a kind redirect comment and are
 closed. Bot PRs are skipped by default so accepted suggestion automation and
 maintenance updates can still open resource or metadata PRs. PRs from owners,
 members, and collaborators are always skipped, so maintainers can add entries
-directly.
+directly. A maintainer can also apply `maintainer-pick` to a contributor's PR
+to skip the audit when accepting an exception; record the reason in the PR.
 
 ### Triage Suggestions
 
